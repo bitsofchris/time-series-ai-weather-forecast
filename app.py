@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import gradio as gr
 import pandas as pd
 
-from src import ecowitt, forecast_log, nws, persist
+from src import ecowitt, forecast_log, nws, persist, storage, sync
 from src.forecast import forecast_series
 from src.weather_ui import (
     aligned_comparison_markdown,
@@ -26,8 +26,8 @@ from src.weather_ui import (
     hero_markdown,
 )
 
-CACHE_TTL_SECONDS = 60 * 60
-AUTO_REFRESH_SECONDS = 60 * 60
+AUTO_REFRESH_SECONDS = 15 * 60          # background tick + archive sync
+CACHE_TTL_SECONDS = AUTO_REFRESH_SECONDS - 60  # so autorefresh always refetches
 DISPLAY_TZ = os.environ.get("DISPLAY_TZ", "America/New_York")
 PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
@@ -158,8 +158,9 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
     strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
-    # Backup the SQLite log to the HF dataset (non-blocking).
+    # Backup forecast log to HF Dataset (non-blocking).
     persist.push_db_async()
+    # The full archive sync + push happens in the autorefresh thread.
 
     return hero, comparison_md, strip, fig, scoreboard
 
@@ -198,10 +199,37 @@ def render_scoreboard(conn) -> str:
 
 
 # --- auto-refresh background thread --------------------------------------
+ECOWITT_ARCHIVE_DB = "data/ecowitt.db"
+
+
+def _sync_archive_all_cycles() -> None:
+    """Refresh the SQLite archive (data/ecowitt.db) for every cycle_type
+    so the local mirror of Ecowitt's storage stays current."""
+    try:
+        cfg = ecowitt.EcowittConfig.from_env()
+    except RuntimeError:
+        return
+    conn = storage.connect(ECOWITT_ARCHIVE_DB)
+    try:
+        for cycle in sync.CYCLES:
+            try:
+                sync.sync_cycle(cfg, conn, cycle, verbose=False)
+            except ecowitt.EcowittRateLimitError as err:
+                print(f"[autorefresh] rate-limited on {cycle.name}: {err} — skipping rest")
+                break
+            except Exception:  # noqa: BLE001
+                print(f"[autorefresh] sync error on {cycle.name}:")
+                traceback.print_exc()
+    finally:
+        conn.close()
+
+
 def _autorefresh_loop():
     while True:
         try:
-            refresh()
+            refresh()                  # live forecast + forecasts.db log
+            _sync_archive_all_cycles() # 5min/30min/4hour raw archive
+            persist.push_all_async()   # back up both DBs to HF Dataset
         except Exception:  # noqa: BLE001
             print("[autorefresh] error during refresh:")
             traceback.print_exc()
@@ -243,7 +271,9 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             choices=list(HORIZON_CONFIG.keys()), value="24 h",
             label="Forecast horizon", scale=1,
         )
-        refresh_btn = gr.Button("Refresh forecast", variant="primary", scale=1)
+    gr.Markdown(
+        "<span style='opacity:0.55'>🔄 Live data + forecast auto-refresh every 15 minutes.</span>"
+    )
 
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
@@ -251,12 +281,11 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     outputs = [hero_md, comparison_md, strip_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
-    refresh_btn.click(refresh, inputs=inputs, outputs=outputs)
     cycle_dd.change(refresh, inputs=inputs, outputs=outputs)
     horizon_dd.change(refresh, inputs=inputs, outputs=outputs)
 
 
 if __name__ == "__main__":
-    persist.pull_db()  # bootstrap the forecast log from the HF Dataset
+    persist.pull_all()  # bootstrap forecast log + archive from the HF Dataset
     _start_autorefresh()
     demo.launch()

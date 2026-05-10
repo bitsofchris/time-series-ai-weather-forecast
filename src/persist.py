@@ -101,3 +101,89 @@ def push_db_async(local_path: str = DEFAULT_LOCAL) -> None:
     threading.Thread(
         target=push_db, args=(local_path,), daemon=True, name="persist-push"
     ).start()
+
+
+# --- multi-file push (forecast log + Ecowitt archive in one commit) ------
+ARCHIVE_LOCAL = "data/ecowitt.db"
+ARCHIVE_PATH_IN_REPO = "ecowitt.db"
+_multi_lock = threading.Lock()
+_multi_last = 0.0
+
+
+def push_all(
+    forecast_local: str = DEFAULT_LOCAL,
+    archive_local: str = ARCHIVE_LOCAL,
+) -> bool:
+    """Upload both DBs in a single dataset commit."""
+    global _multi_last
+    tok = _token()
+    if not tok:
+        return False
+    if time.time() - _multi_last < PUSH_MIN_INTERVAL:
+        return False
+    if not _multi_lock.acquire(blocking=False):
+        return False
+    try:
+        from huggingface_hub import CommitOperationAdd, HfApi  # noqa: PLC0415
+        api = HfApi(token=tok)
+        ops = []
+        for local, in_repo in (
+            (forecast_local, PATH_IN_REPO),
+            (archive_local, ARCHIVE_PATH_IN_REPO),
+        ):
+            if os.path.exists(local):
+                ops.append(CommitOperationAdd(path_in_repo=in_repo, path_or_fileobj=local))
+        if not ops:
+            return False
+        api.create_commit(
+            repo_id=_repo_id(),
+            repo_type="dataset",
+            operations=ops,
+            commit_message="forecast log + archive update",
+        )
+        _multi_last = time.time()
+        sizes = ", ".join(f"{op.path_in_repo}={os.path.getsize(forecast_local if op.path_in_repo==PATH_IN_REPO else archive_local)}B" for op in ops)
+        print(f"[persist] pushed multi to {_repo_id()} ({sizes})")
+        return True
+    except Exception:  # noqa: BLE001
+        print("[persist] push_all failed:")
+        traceback.print_exc()
+        return False
+    finally:
+        _multi_lock.release()
+
+
+def push_all_async(
+    forecast_local: str = DEFAULT_LOCAL,
+    archive_local: str = ARCHIVE_LOCAL,
+) -> None:
+    threading.Thread(
+        target=push_all, args=(forecast_local, archive_local),
+        daemon=True, name="persist-push-all",
+    ).start()
+
+
+def pull_all(
+    forecast_local: str = DEFAULT_LOCAL,
+    archive_local: str = ARCHIVE_LOCAL,
+) -> None:
+    """Pull both DBs from the dataset on startup. Each missing file is silently skipped."""
+    pull_db(forecast_local)
+    # Pull the archive too if it exists.
+    tok = _token()
+    if not tok:
+        return
+    try:
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
+        downloaded = hf_hub_download(
+            repo_id=_repo_id(),
+            repo_type="dataset",
+            filename=ARCHIVE_PATH_IN_REPO,
+            token=tok,
+        )
+        os.makedirs(os.path.dirname(archive_local) or ".", exist_ok=True)
+        shutil.copyfile(downloaded, archive_local)
+        print(f"[persist] pulled archive ({os.path.getsize(archive_local)} bytes)")
+    except Exception:
+        # 404 on first run is expected.
+        pass
