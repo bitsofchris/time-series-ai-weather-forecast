@@ -347,6 +347,28 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
 
+    with gr.Accordion("How the forecast is made", open=False):
+        gr.Markdown(
+            "**Model.** [Datadog/Toto-2.0-4m](https://huggingface.co/Datadog/Toto-2.0-4m) "
+            "(~4 M params, CPU). Smallest variant of Toto 2.0; the larger ones would tighten the band.\n\n"
+            "**Input.** For each metric we feed Toto a univariate window of the most recent "
+            "Ecowitt history at the chosen display cadence (default 1 h spacing). "
+            "Toto requires the context length to be a multiple of its `patch_size=32`, so we "
+            "truncate the oldest points to the largest multiple of 32 we have — or, if we have "
+            "fewer than 32, left-pad to one patch and set `target_mask=False` on the padded "
+            "steps so the model ignores them.\n\n"
+            "**Output.** `model.forecast(...)` returns 9 analytical quantiles "
+            "(`[0.1, 0.2, …, 0.9]`) for each future step — no Monte-Carlo sampling. "
+            "We plot the p10–p90 band and the p50 median. "
+            "**Horizon.** `horizon_steps = round(horizon_hours / step_hours)`; defaults give 24 hourly steps.\n\n"
+            "**Cadence.** A daemon thread inside the Space re-runs the whole pipeline every "
+            "15 minutes (cache TTL is 14 min, so each tick re-hits Ecowitt and NWS). Every "
+            "snapshot is persisted to SQLite and backed up to a private HF Dataset, which is "
+            "also what powers the side-by-side scoreboard and the past-forecast overlays "
+            "above.\n\n"
+            "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
+        )
+
     outputs = [hero_md, comparison_md, strip_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
