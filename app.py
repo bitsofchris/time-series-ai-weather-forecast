@@ -9,19 +9,22 @@ forecast for the same window.
 from __future__ import annotations
 
 import os
+import threading
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 
 import gradio as gr
 import pandas as pd
 
-from src import ecowitt, nws
+from src import ecowitt, forecast_log, nws
 from src.forecast import forecast_series
 from src.plotting import metric_figure
 
 CACHE_TTL_SECONDS = 60 * 60  # 1 hour
 HISTORY_DAYS = 7
 HORIZON_HOURS = 24
+AUTO_REFRESH_SECONDS = 60 * 60  # log a fresh forecast snapshot every hour
 
 # Three metrics to forecast. Maps Ecowitt history column → plot config.
 METRICS = [
@@ -73,13 +76,26 @@ def refresh():
     nws_df = fetch_nws()
     now = pd.Timestamp.now(tz="UTC").floor("h")
 
+    # NWS's first period and Ecowitt's last bucket describe the same wall-clock
+    # hour; drop the overlap so all forecasts begin one hour after the last
+    # observed actual.
+    last_actual = history.dropna(how="all").index.max()
+    nws_future = nws_df[nws_df.index > last_actual] if last_actual is not None else nws_df
+
+    log_conn = forecast_log.connect()
+    forecast_log.record_actuals(log_conn, history)
+
     figs = []
     for m in METRICS:
         series = history[m["col"]].dropna()
         toto = forecast_series(series, horizon=HORIZON_HOURS)
-        nws_series = (
-            nws_df[m["nws_col"]] if (m["nws_col"] and m["nws_col"] in nws_df.columns) else None
-        )
+        forecast_log.record_toto(log_conn, m["col"], toto)
+
+        nws_series = None
+        if m["nws_col"] and m["nws_col"] in nws_future.columns:
+            nws_series = nws_future[m["nws_col"]].dropna()
+            forecast_log.record_nws(log_conn, m["col"], nws_series)
+
         figs.append(
             metric_figure(
                 history=series.tail(HISTORY_DAYS * 24),
@@ -90,7 +106,59 @@ def refresh():
                 now=now,
             )
         )
-    return figs[0], figs[1], figs[2]
+    scoreboard_md = render_scoreboard(log_conn)
+    return figs[0], figs[1], figs[2], scoreboard_md
+
+
+# --- scoreboard ----------------------------------------------------------
+def render_scoreboard(conn) -> str:
+    lines = ["### Forecast scoreboard (rolling 48h MAE, lower = better)"]
+    any_data = False
+    for metric, label, unit in [
+        ("temp_f", "Temperature", "°F"),
+        ("humidity", "Humidity", "%"),
+        ("pressure_inhg", "Pressure", "inHg"),
+    ]:
+        summ = forecast_log.scoreboard_summary(conn, metric=metric, window_hours=48)
+        if summ.empty:
+            continue
+        any_data = True
+        by = {row["source"]: row for _, row in summ.iterrows()}
+        toto = by.get("toto")
+        nws = by.get("nws")
+        parts = [f"**{label}**"]
+        if toto is not None:
+            parts.append(f"Toto {toto['mae']:.2f} {unit} (n={int(toto['n'])})")
+        if nws is not None:
+            parts.append(f"NWS {nws['mae']:.2f} {unit} (n={int(nws['n'])})")
+        if toto is not None and nws is not None:
+            diff = toto["mae"] - nws["mae"]
+            winner = "Toto" if diff < 0 else "NWS"
+            parts.append(f"→ **{winner}** by {abs(diff):.2f} {unit}")
+        lines.append(" · ".join(parts))
+    if not any_data:
+        lines.append("_No scored forecasts yet — the scoreboard fills in once forecasts have target hours in the past with matching Ecowitt actuals (typically after the first hour of running)._")
+    return "\n\n".join(lines)
+
+
+# --- auto-refresh background thread --------------------------------------
+def _autorefresh_loop():
+    """Call refresh() on a schedule so we accumulate forecast snapshots even
+    when nobody is loading the page. Errors are logged and swallowed so a
+    transient API failure doesn't kill the thread."""
+    while True:
+        try:
+            refresh()
+        except Exception:  # noqa: BLE001
+            print("[autorefresh] error during refresh:")
+            traceback.print_exc()
+        time.sleep(AUTO_REFRESH_SECONDS)
+
+
+def _start_autorefresh():
+    t = threading.Thread(target=_autorefresh_loop, daemon=True, name="autorefresh")
+    t.start()
+    print(f"[autorefresh] started, interval={AUTO_REFRESH_SECONDS}s")
 
 
 # --- UI -------------------------------------------------------------------
@@ -109,14 +177,16 @@ with gr.Blocks(title="Toto Weather Forecast") as demo:
     gr.Markdown(HOOK)
     gr.Markdown(SUBTITLE)
     refresh_btn = gr.Button("Refresh forecast", variant="primary")
+    scoreboard_md = gr.Markdown()
     temp_plot = gr.Plot(label="Temperature")
     humidity_plot = gr.Plot(label="Humidity")
     pressure_plot = gr.Plot(label="Pressure")
 
-    outputs = [temp_plot, humidity_plot, pressure_plot]
+    outputs = [temp_plot, humidity_plot, pressure_plot, scoreboard_md]
     demo.load(refresh, outputs=outputs)
     refresh_btn.click(refresh, outputs=outputs)
 
 
 if __name__ == "__main__":
+    _start_autorefresh()
     demo.launch()
