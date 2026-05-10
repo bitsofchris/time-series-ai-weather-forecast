@@ -64,13 +64,28 @@ def hero_markdown(
     history: pd.DataFrame,
     nws_first: pd.Series | None,
     tz: str,
+    realtime: dict | None = None,
 ) -> str:
-    """Two-row 'now' table: temperature only, with Ecowitt vs NWS this hour."""
-    if history.empty:
+    """Two-row 'now' table: temperature only, with Ecowitt vs NWS this hour.
+
+    Prefers `realtime` (from /device/real_time) for the live reading because
+    the hourly bucket lags by up to 30 min on the GW3000B.
+    """
+    cur_temp: float | None = None
+    when_ts: pd.Timestamp | None = None
+
+    if realtime and realtime.get("temp_f") is not None and realtime.get("last_ts") is not None:
+        cur_temp = float(realtime["temp_f"])
+        when_ts = realtime["last_ts"]
+    elif not history.empty:
+        last = history.dropna(how="all").index.max()
+        cur_temp = float(history.loc[last, "temp_f"])
+        when_ts = last
+
+    if cur_temp is None or when_ts is None:
         return "_(no current readings yet)_"
-    last = history.dropna(how="all").index.max()
-    cur = history.loc[last]
-    when = last.tz_convert(tz).strftime("%-I:%M %p %Z on %a %b %-d")
+
+    when = when_ts.tz_convert(tz).strftime("%-I:%M %p %Z on %a %b %-d")
 
     nws_temp_str = "—"
     nws_short = ""
@@ -85,7 +100,7 @@ def hero_markdown(
         if isinstance(row, pd.Series):
             if "temp_f" in row and pd.notna(row["temp_f"]):
                 nws_temp_str = f"**{row['temp_f']:.0f}°F**"
-                gap = float(cur["temp_f"]) - float(row["temp_f"])
+                gap = cur_temp - float(row["temp_f"])
                 sign = "+" if gap >= 0 else ""
                 gap_str = f" <span style='opacity:0.55'>(NWS off by {sign}{gap:.1f}°F)</span>"
             if "short_forecast" in row:
@@ -95,7 +110,7 @@ def hero_markdown(
     table = (
         "| Source | Temperature |\n"
         "|---|---|\n"
-        f"| 📡 Ecowitt (measured) | **{cur['temp_f']:.1f}°F** |\n"
+        f"| 📡 Ecowitt (measured) | **{cur_temp:.1f}°F** |\n"
         f"| 🌎 NWS forecast for {nws_hour_label} | {nws_temp_str}{gap_str} |"
     )
     return (

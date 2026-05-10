@@ -81,6 +81,44 @@ def fetch_history(cycle_type: str, resample: str, days: int) -> pd.DataFrame:
     return ecowitt.history_to_dataframe(raw, resample=resample)
 
 
+@cached(60)  # short TTL — real-time is the freshness path
+def fetch_realtime_snapshot() -> dict:
+    """Return the most recent reading from /device/real_time as a flat dict.
+
+    The hourly history bucket only fills once Ecowitt has at least one
+    reading inside that hour, which can lag real time by up to 30 min on
+    the GW3000B. /device/real_time returns the device's last reading with
+    its own minute-resolution timestamp, so we use it for the live hero.
+    """
+    cfg = ecowitt.EcowittConfig.from_env()
+    body = ecowitt.fetch_real_time(cfg, call_back="outdoor,pressure,rainfall_piezo")
+    data = body.get("data") or {}
+    out = {}
+
+    def _val(node):
+        if isinstance(node, dict) and "value" in node:
+            try:
+                return float(node["value"])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _ts(node):
+        if isinstance(node, dict) and "time" in node:
+            try:
+                return pd.to_datetime(int(node["time"]), unit="s", utc=True)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    out["temp_f"] = _val(data.get("outdoor", {}).get("temperature"))
+    out["humidity"] = _val(data.get("outdoor", {}).get("humidity"))
+    out["pressure_inhg"] = _val(data.get("pressure", {}).get("relative"))
+    out["rain_in_hr"] = _val(data.get("rainfall_piezo", {}).get("rain_rate"))
+    out["last_ts"] = _ts(data.get("outdoor", {}).get("temperature"))
+    return out
+
+
 @cached(CACHE_TTL_SECONDS)
 def fetch_nws(horizon_hours: int) -> pd.DataFrame:
     lat = float(os.environ["LAT"])
@@ -112,6 +150,7 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
     horizon_steps = max(1, int(round(horizon_hours / step_hours)))
 
     history = fetch_history(cycle_type, resample, hist_days)
+    realtime = fetch_realtime_snapshot()
     nws_df_raw = fetch_nws(horizon_hours)
     nws_df = _resample_nws_to(nws_df_raw, resample)
 
@@ -146,7 +185,7 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
         now=now,
     )
 
-    hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ)
+    hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ, realtime=realtime)
     if "temp_f" in totos:
         comparison_md = "### 🆚 24-hour temperature forecast — same hour, side-by-side\n\n" + aligned_comparison_markdown(
             toto=totos["temp_f"],
