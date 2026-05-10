@@ -22,7 +22,7 @@ from src.forecast import forecast_series
 from src.weather_ui import (
     combined_figure,
     emoji_strip_markdown,
-    headline_forecast_markdown,
+    headline_forecast_blocks,
     hero_markdown,
 )
 
@@ -143,15 +143,18 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
     )
 
     hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ)
-    headline = headline_forecast_markdown(
-        toto=totos.get("temp_f"),
-        nws_temp=nws_aligned.get("temp_f"),
-        tz=DISPLAY_TZ,
-    ) if "temp_f" in totos else ""
+    if "temp_f" in totos:
+        toto_md, nws_md = headline_forecast_blocks(
+            toto=totos["temp_f"],
+            nws_temp=nws_aligned.get("temp_f"),
+            tz=DISPLAY_TZ,
+        )
+    else:
+        toto_md, nws_md = "", ""
     strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
-    return hero, headline, strip, fig, scoreboard
+    return hero, toto_md, nws_md, strip, fig, scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -221,7 +224,9 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     gr.Markdown(SUBTITLE)
 
     hero_md = gr.Markdown()
-    headline_md = gr.Markdown()
+    with gr.Row():
+        toto_headline_md = gr.Markdown()
+        nws_headline_md = gr.Markdown()
     strip_md = gr.Markdown()
 
     with gr.Row():
@@ -238,7 +243,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
 
-    outputs = [hero_md, headline_md, strip_md, plot, scoreboard_md]
+    outputs = [hero_md, toto_headline_md, nws_headline_md, strip_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
     refresh_btn.click(refresh, inputs=inputs, outputs=outputs)

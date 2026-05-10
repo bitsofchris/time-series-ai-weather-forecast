@@ -97,33 +97,30 @@ def hero_markdown(
     return "\n\n".join(lines)
 
 
-def headline_forecast_markdown(
+def headline_forecast_blocks(
     toto: TotoForecast,
     nws_temp: pd.Series | None,
     tz: str,
-) -> str:
-    """Side-by-side hi/lo plus Toto confidence chip at +24h."""
+) -> tuple[str, str]:
+    """Return (toto_md, nws_md) for placement in side-by-side columns."""
     t_hi, t_hi_t, t_lo, t_lo_t = hi_lo(toto.median, tz)
     width24 = float(toto.p90.iloc[-1] - toto.p10.iloc[-1])
-
-    toto_block = (
-        f"**🤖 Toto says (next 24h)**\n\n"
-        f"High **{t_hi:.0f}°F** at {t_hi_t} · Low **{t_lo:.0f}°F** at {t_lo_t}\n\n"
+    toto_md = (
+        "### 🤖 Toto says (next 24h)\n\n"
+        f"High **{t_hi:.0f}°F** at {t_hi_t}  ·  Low **{t_lo:.0f}°F** at {t_lo_t}\n\n"
         f"<span style='opacity:0.6'>80% interval at +24h: ±{width24/2:.1f}°F</span>"
     )
 
     if nws_temp is None or nws_temp.empty:
-        nws_block = "**🌎 NWS** _(unavailable)_"
+        nws_md = "### 🌎 NWS\n\n_(unavailable for this metric)_"
     else:
         n_hi, n_hi_t, n_lo, n_lo_t = hi_lo(nws_temp, tz)
-        nws_block = (
-            f"**🌎 NWS says (next 24h)**\n\n"
-            f"High **{n_hi:.0f}°F** at {n_hi_t} · Low **{n_lo:.0f}°F** at {n_lo_t}\n\n"
-            f"<span style='opacity:0.6'>Point forecast (no interval)</span>"
+        nws_md = (
+            "### 🌎 NWS says (next 24h)\n\n"
+            f"High **{n_hi:.0f}°F** at {n_hi_t}  ·  Low **{n_lo:.0f}°F** at {n_lo_t}\n\n"
+            "<span style='opacity:0.6'>Point forecast (no interval)</span>"
         )
-
-    # Two columns via Markdown table with bare cells.
-    return f"| {toto_block} | {nws_block} |\n|---|---|"
+    return toto_md, nws_md
 
 
 def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:
