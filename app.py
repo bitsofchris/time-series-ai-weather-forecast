@@ -156,7 +156,16 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
 
     last_actual = history.dropna(how="all").index.max()
     nws_future = nws_df[nws_df.index > last_actual] if last_actual is not None else nws_df
-    nws_first = nws_df_raw.head(1) if not nws_df_raw.empty else None
+
+    # The NWS response often starts with a period that began in the past
+    # (forecasts are issued every ~hour but each period is 1h long). For
+    # the hero, find the period that *contains* "now".
+    now_utc = pd.Timestamp.now(tz="UTC")
+    if not nws_df_raw.empty:
+        covering = nws_df_raw[nws_df_raw.index <= now_utc]
+        nws_first = covering.tail(1) if not covering.empty else nws_df_raw.head(1)
+    else:
+        nws_first = None
 
     # Log to SQLite (always at the chosen cadence)
     log_conn = forecast_log.connect()
