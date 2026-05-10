@@ -42,9 +42,10 @@ CYCLE_CONFIG: dict[str, tuple[str, str, int]] = {
 HORIZON_CONFIG: dict[str, int] = {"24 h": 24, "48 h": 48, "72 h": 72}
 
 METRICS = [
-    {"col": "temp_f",        "title": "Outdoor temperature", "y": "°F",   "nws_col": "temp_f"},
-    {"col": "humidity",      "title": "Outdoor humidity",    "y": "%",    "nws_col": "humidity"},
-    {"col": "pressure_inhg", "title": "Barometric pressure", "y": "inHg", "nws_col": None},
+    {"col": "temp_f",        "title": "Outdoor temperature", "y": "°F",     "nws_col": "temp_f"},
+    {"col": "rain_in_hr",    "title": "Rainfall rate",       "y": "in/hr",  "nws_col": None},
+    {"col": "humidity",      "title": "Outdoor humidity",    "y": "%",      "nws_col": "humidity"},
+    {"col": "pressure_inhg", "title": "Barometric pressure", "y": "inHg",   "nws_col": None},
 ]
 
 
@@ -73,7 +74,10 @@ def fetch_history(cycle_type: str, resample: str, days: int) -> pd.DataFrame:
     cfg = ecowitt.EcowittConfig.from_env()
     end = datetime.now(timezone.utc).replace(tzinfo=None)
     start = end - timedelta(days=days)
-    raw = ecowitt.fetch_history(cfg, start, end, cycle_type=cycle_type, call_back="outdoor,pressure")
+    raw = ecowitt.fetch_history(
+        cfg, start, end, cycle_type=cycle_type,
+        call_back="outdoor,pressure,rainfall_piezo",
+    )
     return ecowitt.history_to_dataframe(raw, resample=resample)
 
 

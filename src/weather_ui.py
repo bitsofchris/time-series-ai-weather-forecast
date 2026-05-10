@@ -76,7 +76,11 @@ def hero_markdown(
     nws_short = ""
     glyph = "🌡"
     gap_str = ""
+    nws_hour_label = "this hour"
     if nws_first is not None and not nws_first.empty:
+        idx0 = nws_first.index[0] if isinstance(nws_first, pd.DataFrame) else nws_first.name
+        if isinstance(idx0, pd.Timestamp):
+            nws_hour_label = idx0.tz_convert(tz).strftime("%-I %p %Z")
         row = nws_first.iloc[0] if isinstance(nws_first, pd.DataFrame) else nws_first
         if isinstance(row, pd.Series):
             if "temp_f" in row and pd.notna(row["temp_f"]):
@@ -92,7 +96,7 @@ def hero_markdown(
         "| Source | Temperature |\n"
         "|---|---|\n"
         f"| 📡 Ecowitt (measured) | **{cur['temp_f']:.1f}°F** |\n"
-        f"| 🌎 NWS forecast for this hour | {nws_temp_str}{gap_str} |"
+        f"| 🌎 NWS forecast for {nws_hour_label} | {nws_temp_str}{gap_str} |"
     )
     return (
         f"### {glyph} {place}\n\n"
@@ -233,7 +237,7 @@ def combined_figure(
         showlegend = False  # only first subplot shows legend entries
 
     fig.update_layout(
-        height=720,
+        height=900,
         hovermode="x unified",
         margin=dict(l=50, r=20, t=50, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="right", x=1),

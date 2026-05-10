@@ -32,6 +32,7 @@ HISTORY_FIELDS: dict[str, tuple[str, str]] = {
     "temp_f": ("outdoor", "temperature"),
     "humidity": ("outdoor", "humidity"),
     "pressure_inhg": ("pressure", "relative"),
+    "rain_in_hr": ("rainfall_piezo", "rain_rate"),
 }
 
 # Outdoor temp/humidity live under common.outdoor; pressure under pressure.
