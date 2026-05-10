@@ -4,3 +4,8 @@ numpy
 plotly
 requests
 python-dotenv
+
+# Toto 2.0 inference. The package isn't on PyPI; install from the
+# DataDog/toto repo's toto2/ subdirectory.
+torch>=2.4.0
+toto-2 @ git+https://github.com/DataDog/toto.git#subdirectory=toto2
