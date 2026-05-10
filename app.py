@@ -20,6 +20,7 @@ import pandas as pd
 from src import ecowitt, forecast_log, nws, persist
 from src.forecast import forecast_series
 from src.weather_ui import (
+    aligned_comparison_markdown,
     combined_figure,
     emoji_strip_markdown,
     headline_forecast_blocks,
@@ -149,15 +150,20 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
             nws_temp=nws_aligned.get("temp_f"),
             tz=DISPLAY_TZ,
         )
+        comparison_md = "### 🆚 Same hour, side-by-side (temperature)\n\n" + aligned_comparison_markdown(
+            toto=totos["temp_f"],
+            nws_temp=nws_aligned.get("temp_f"),
+            tz=DISPLAY_TZ,
+        )
     else:
-        toto_md, nws_md = "", ""
+        toto_md, nws_md, comparison_md = "", "", ""
     strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
     # Backup the SQLite log to the HF dataset (non-blocking).
     persist.push_db_async()
 
-    return hero, toto_md, nws_md, strip, fig, scoreboard
+    return hero, toto_md, nws_md, comparison_md, strip, fig, scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -230,6 +236,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     with gr.Row():
         toto_headline_md = gr.Markdown()
         nws_headline_md = gr.Markdown()
+    comparison_md = gr.Markdown()
     strip_md = gr.Markdown()
 
     with gr.Row():
@@ -246,7 +253,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
 
-    outputs = [hero_md, toto_headline_md, nws_headline_md, strip_md, plot, scoreboard_md]
+    outputs = [hero_md, toto_headline_md, nws_headline_md, comparison_md, strip_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
     refresh_btn.click(refresh, inputs=inputs, outputs=outputs)
