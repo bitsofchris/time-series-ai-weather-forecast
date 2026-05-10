@@ -65,79 +65,60 @@ def hero_markdown(
     nws_first: pd.Series | None,
     tz: str,
 ) -> str:
-    """A 'now' tile that explicitly distinguishes Ecowitt's measured value
-    from NWS's forecast for the same hour, so the viewer can see the model
-    error live."""
+    """Two-row 'now' table: temperature only, with Ecowitt vs NWS this hour."""
     if history.empty:
         return "_(no current readings yet)_"
     last = history.dropna(how="all").index.max()
     cur = history.loc[last]
-    prev_idx = history.index[history.index < last]
-    prev = history.loc[prev_idx[-1]] if len(prev_idx) else None
+    when = last.tz_convert(tz).strftime("%-I:%M %p %Z on %a %b %-d")
 
-    def delta(col: str, unit: str, fmt: str = "+.1f") -> str:
-        if prev is None or pd.isna(prev.get(col)) or pd.isna(cur.get(col)):
-            return ""
-        d = cur[col] - prev[col]
-        arrow = "▲" if d > 0 else ("▼" if d < 0 else "·")
-        return f" <span style='opacity:0.55'>({arrow} {d:{fmt}} {unit}/h)</span>"
-
-    when = last.tz_convert(tz).strftime("%-I:%M %p %Z")
-
-    # Pull NWS's forecast for the same wall-clock hour (its first period).
     nws_temp_str = "—"
-    nws_short = "—"
+    nws_short = ""
     glyph = "🌡"
+    gap_str = ""
     if nws_first is not None and not nws_first.empty:
         row = nws_first.iloc[0] if isinstance(nws_first, pd.DataFrame) else nws_first
         if isinstance(row, pd.Series):
             if "temp_f" in row and pd.notna(row["temp_f"]):
-                nws_temp_str = f"{row['temp_f']:.0f}°F"
+                nws_temp_str = f"**{row['temp_f']:.0f}°F**"
+                gap = float(cur["temp_f"]) - float(row["temp_f"])
+                sign = "+" if gap >= 0 else ""
+                gap_str = f" <span style='opacity:0.55'>(NWS off by {sign}{gap:.1f}°F)</span>"
             if "short_forecast" in row:
                 nws_short = str(row["short_forecast"])
                 glyph = emoji_for(nws_short)
 
-    # Highlight the gap between actual and NWS prediction for this hour.
-    gap_str = ""
-    if nws_first is not None and not nws_first.empty:
-        row = nws_first.iloc[0] if isinstance(nws_first, pd.DataFrame) else nws_first
-        if isinstance(row, pd.Series) and "temp_f" in row and pd.notna(row["temp_f"]):
-            gap = float(cur["temp_f"]) - float(row["temp_f"])
-            sign = "+" if gap >= 0 else ""
-            gap_str = f"<span style='opacity:0.55'>(NWS off by {sign}{gap:.1f}°F)</span>"
-
-    lines = [
-        f"### {glyph} {place}",
-        (
-            "| | Temperature | Humidity | Pressure | Conditions |\n"
-            "|---|---|---|---|---|\n"
-            f"| **📡 Ecowitt now** | **{cur['temp_f']:.1f}°F**{delta('temp_f','°F')}"
-            f" | **{cur['humidity']:.0f}%**{delta('humidity','%','+.0f')}"
-            f" | **{cur['pressure_inhg']:.2f} inHg**{delta('pressure_inhg','inHg','+.3f')}"
-            f" | _(measured)_ |\n"
-            f"| **🌎 NWS this hour** | **{nws_temp_str}** {gap_str} | — | — | {nws_short} |"
-        ),
-        f"<span style='opacity:0.55'>Last Ecowitt reading: {when}</span>",
-    ]
-    return "\n\n".join(lines)
+    table = (
+        "| Source | Temperature |\n"
+        "|---|---|\n"
+        f"| 📡 Ecowitt (measured) | **{cur['temp_f']:.1f}°F** |\n"
+        f"| 🌎 NWS forecast for this hour | {nws_temp_str}{gap_str} |"
+    )
+    return (
+        f"### {glyph} {place}\n\n"
+        f"{table}\n\n"
+        f"<span style='opacity:0.55'>Last Ecowitt reading at {when}</span>"
+    )
 
 
 def aligned_comparison_markdown(
     toto: TotoForecast,
     nws_temp: pd.Series | None,
     tz: str,
-    offsets_hours: list[int] = (6, 12, 18, 24),
+    step_hours: int = 3,
+    max_offset_hours: int = 24,
 ) -> str:
-    """Apples-to-apples table: at the same future hour, show Toto and NWS.
+    """Future forecast table — same wall-clock hour for both models.
 
-    For each requested offset h, find the forecast point in each series
-    closest to t0 + h hours and report both numbers in the same row.
+    Starts at the first forecast hour (i.e. the next hour after the most
+    recent Ecowitt reading) and steps forward in `step_hours` increments.
     """
     if toto is None or toto.median.empty:
         return ""
-    base = toto.median.index[0] - (toto.median.index[1] - toto.median.index[0]) if len(toto.median) > 1 else toto.median.index[0]
+    base = toto.median.index[0]  # first forecast hour
+    base_day = base.tz_convert(tz).strftime("%a")
 
-    def _nearest(series: pd.Series, target: pd.Timestamp):
+    def _nearest(series: pd.Series | None, target: pd.Timestamp):
         if series is None or series.empty:
             return None, None
         idx = series.index.get_indexer([target], method="nearest")[0]
@@ -146,13 +127,17 @@ def aligned_comparison_markdown(
         return series.index[idx], float(series.iloc[idx])
 
     rows = ["| When | 🤖 Toto | 🌎 NWS | Δ |", "|---|---|---|---|"]
-    for h in offsets_hours:
+    for h in range(0, max_offset_hours + 1, step_hours):
         target = base + pd.Timedelta(hours=h)
         t_idx, t_val = _nearest(toto.median, target)
-        n_idx, n_val = _nearest(nws_temp, target) if nws_temp is not None else (None, None)
+        n_idx, n_val = _nearest(nws_temp, target)
         if t_val is None and n_val is None:
             continue
-        when_label = (t_idx or n_idx).tz_convert(tz).strftime("%-I %p %a")
+        local = (t_idx or n_idx).tz_convert(tz)
+        if local.strftime("%a") == base_day:
+            label = local.strftime("%-I %p")
+        else:
+            label = local.strftime("%a %-I %p")
         toto_str = f"**{t_val:.0f}°F**" if t_val is not None else "—"
         nws_str = f"**{n_val:.0f}°F**" if n_val is not None else "—"
         if t_val is not None and n_val is not None:
@@ -161,36 +146,8 @@ def aligned_comparison_markdown(
             delta_str = f"{sign}{d:.1f}°F"
         else:
             delta_str = "—"
-        rows.append(f"| +{h}h · {when_label} | {toto_str} | {nws_str} | {delta_str} |")
+        rows.append(f"| {label} | {toto_str} | {nws_str} | {delta_str} |")
     return "\n".join(rows)
-
-
-def headline_forecast_blocks(
-    toto: TotoForecast,
-    nws_temp: pd.Series | None,
-    tz: str,
-) -> tuple[str, str]:
-    """Side-by-side high/low summaries — same 24h window for both, so
-    different peak/trough times become a real comparison."""
-    t_hi, t_hi_t, t_lo, t_lo_t = hi_lo(toto.median, tz)
-    width24 = float(toto.p90.iloc[-1] - toto.p10.iloc[-1])
-    toto_md = (
-        "### 🤖 Toto's 24h forecast\n\n"
-        f"High **{t_hi:.0f}°F** at {t_hi_t}\n\n"
-        f"Low **{t_lo:.0f}°F** at {t_lo_t}\n\n"
-        f"<span style='opacity:0.55'>80% interval at +24h: ±{width24/2:.1f}°F</span>"
-    )
-    if nws_temp is None or nws_temp.empty:
-        nws_md = "### 🌎 NWS 24h forecast\n\n_(unavailable)_"
-    else:
-        n_hi, n_hi_t, n_lo, n_lo_t = hi_lo(nws_temp, tz)
-        nws_md = (
-            "### 🌎 NWS 24h forecast\n\n"
-            f"High **{n_hi:.0f}°F** at {n_hi_t}\n\n"
-            f"Low **{n_lo:.0f}°F** at {n_lo_t}\n\n"
-            "<span style='opacity:0.55'>Point forecast (no interval)</span>"
-        )
-    return toto_md, nws_md
 
 
 def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:

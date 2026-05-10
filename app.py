@@ -23,7 +23,6 @@ from src.weather_ui import (
     aligned_comparison_markdown,
     combined_figure,
     emoji_strip_markdown,
-    headline_forecast_blocks,
     hero_markdown,
 )
 
@@ -145,25 +144,20 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
 
     hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ)
     if "temp_f" in totos:
-        toto_md, nws_md = headline_forecast_blocks(
-            toto=totos["temp_f"],
-            nws_temp=nws_aligned.get("temp_f"),
-            tz=DISPLAY_TZ,
-        )
-        comparison_md = "### 🆚 Same hour, side-by-side (temperature)\n\n" + aligned_comparison_markdown(
+        comparison_md = "### 🆚 24-hour temperature forecast — same hour, side-by-side\n\n" + aligned_comparison_markdown(
             toto=totos["temp_f"],
             nws_temp=nws_aligned.get("temp_f"),
             tz=DISPLAY_TZ,
         )
     else:
-        toto_md, nws_md, comparison_md = "", "", ""
+        comparison_md = ""
     strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
     # Backup the SQLite log to the HF dataset (non-blocking).
     persist.push_db_async()
 
-    return hero, toto_md, nws_md, comparison_md, strip, fig, scoreboard
+    return hero, comparison_md, strip, fig, scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -233,9 +227,6 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     gr.Markdown(SUBTITLE)
 
     hero_md = gr.Markdown()
-    with gr.Row():
-        toto_headline_md = gr.Markdown()
-        nws_headline_md = gr.Markdown()
     comparison_md = gr.Markdown()
     strip_md = gr.Markdown()
 
@@ -253,7 +244,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
 
-    outputs = [hero_md, toto_headline_md, nws_headline_md, comparison_md, strip_md, plot, scoreboard_md]
+    outputs = [hero_md, comparison_md, strip_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
     refresh_btn.click(refresh, inputs=inputs, outputs=outputs)
