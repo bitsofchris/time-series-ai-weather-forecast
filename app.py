@@ -186,12 +186,33 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
             forecast_log.record_nws(log_conn, m["col"], ns)
 
     now = pd.Timestamp.now(tz="UTC").floor("h")
+
+    # Look back: for each metric, build a series of past predictions issued
+    # for actual hours that have already passed. Lets us overlay what each
+    # model thought vs what happened.
+    visible_history = history.tail(int(hist_days * 24 / step_hours))
+    since_unix = (
+        int(visible_history.index.min().timestamp()) if not visible_history.empty else None
+    )
+    past_toto: dict[str, pd.DataFrame] = {}
+    past_nws: dict[str, pd.DataFrame] = {}
+    for m in METRICS:
+        col = m["col"]
+        pt = forecast_log.historical_predictions(log_conn, "toto", col, since_unix=since_unix)
+        if not pt.empty:
+            past_toto[col] = pt
+        pn = forecast_log.historical_predictions(log_conn, "nws", col, since_unix=since_unix)
+        if not pn.empty:
+            past_nws[col] = pn
+
     fig = combined_figure(
-        history=history.tail(int(hist_days * 24 / step_hours)),
+        history=visible_history,
         totos=totos,
         nws_df=nws_future,
         metrics=METRICS,
         now=now,
+        past_toto=past_toto,
+        past_nws=past_nws,
     )
 
     hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ, realtime=realtime)

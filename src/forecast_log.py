@@ -160,6 +160,45 @@ def scoreboard(
     return df
 
 
+def historical_predictions(
+    conn: sqlite3.Connection,
+    source: str,
+    metric: str,
+    since_unix: int | None = None,
+) -> pd.DataFrame:
+    """For each past target_ts, return the most-recent forecast issued for it.
+
+    Useful for overlaying 'what we predicted vs what actually happened' on the
+    historical portion of the chart. Result is a DataFrame indexed by UTC
+    timestamp with columns p10, p50, p90 (NWS rows have NULL p10/p90).
+    """
+    params: list = [source, metric]
+    where_extra = ""
+    if since_unix is not None:
+        where_extra = " AND target_ts >= ?"
+        params.append(since_unix)
+    sql = f"""
+    WITH latest AS (
+        SELECT source, target_ts, metric,
+               MAX(forecast_made_at) AS forecast_made_at
+        FROM forecast_snapshots
+        WHERE source = ? AND metric = ? AND forecast_made_at <= target_ts
+        {where_extra}
+        GROUP BY source, target_ts, metric
+    )
+    SELECT f.target_ts, f.p10, f.p50, f.p90
+    FROM forecast_snapshots f
+    JOIN latest l USING (source, target_ts, metric, forecast_made_at)
+    ORDER BY f.target_ts
+    """
+    df = pd.read_sql_query(sql, conn, params=params)
+    if df.empty:
+        return df
+    df.index = pd.to_datetime(df["target_ts"], unit="s", utc=True)
+    df = df.drop(columns=["target_ts"])
+    return df
+
+
 def scoreboard_summary(
     conn: sqlite3.Connection,
     metric: str = "temp_f",
