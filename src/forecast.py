@@ -87,23 +87,32 @@ def forecast_series(
     if series.empty:
         raise ValueError("Cannot forecast an empty series")
 
+    import numpy as np  # noqa: PLC0415
+
     clean = series.astype(float).interpolate(limit_direction="both")
 
     # Toto requires the context length to be a multiple of the model's
-    # patch_size (32 for Toto-2.0-4m). Truncate the oldest points to fit.
+    # patch_size (32 for Toto-2.0-4m). If we have at least one full patch,
+    # truncate the oldest points to fit. If we have fewer, left-pad with the
+    # first value and mark the padded region False in the mask so Toto
+    # ignores it.
     model = load_model(model_id, device=device)
     patch = int(model.config.patch_size)
-    n = (len(clean) // patch) * patch
-    if n < patch:
-        raise ValueError(
-            f"Need at least {patch} points (got {len(clean)}); "
-            "fetch a longer history window."
-        )
-    clean = clean.iloc[-n:]
-    arr = clean.to_numpy(dtype=np.float32)
+    raw = clean.to_numpy(dtype=np.float32)
+    n_raw = len(raw)
+
+    if n_raw >= patch:
+        n = (n_raw // patch) * patch
+        arr = raw[-n:]
+        mask_vec = np.ones(n, dtype=bool)
+    else:
+        n = patch
+        pad = n - n_raw
+        arr = np.concatenate([np.full(pad, raw[0], dtype=np.float32), raw])
+        mask_vec = np.concatenate([np.zeros(pad, dtype=bool), np.ones(n_raw, dtype=bool)])
 
     target = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # (1, 1, T)
-    target_mask = torch.ones_like(target, dtype=torch.bool)
+    target_mask = torch.from_numpy(mask_vec).unsqueeze(0).unsqueeze(0)
     series_ids = torch.zeros(1, 1, dtype=torch.long)
 
     target = target.to(device)

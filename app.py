@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import gradio as gr
 import pandas as pd
 
-from src import ecowitt, forecast_log, nws
+from src import ecowitt, forecast_log, nws, persist
 from src.forecast import forecast_series
 from src.weather_ui import (
     combined_figure,
@@ -154,6 +154,9 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
     strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
+    # Backup the SQLite log to the HF dataset (non-blocking).
+    persist.push_db_async()
+
     return hero, toto_md, nws_md, strip, fig, scoreboard
 
 
@@ -252,5 +255,6 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
 
 
 if __name__ == "__main__":
+    persist.pull_db()  # bootstrap the forecast log from the HF Dataset
     _start_autorefresh()
     demo.launch()
