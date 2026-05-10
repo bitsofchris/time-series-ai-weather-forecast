@@ -88,13 +88,24 @@ def forecast_series(
         raise ValueError("Cannot forecast an empty series")
 
     clean = series.astype(float).interpolate(limit_direction="both")
+
+    # Toto requires the context length to be a multiple of the model's
+    # patch_size (32 for Toto-2.0-4m). Truncate the oldest points to fit.
+    model = load_model(model_id, device=device)
+    patch = int(model.config.patch_size)
+    n = (len(clean) // patch) * patch
+    if n < patch:
+        raise ValueError(
+            f"Need at least {patch} points (got {len(clean)}); "
+            "fetch a longer history window."
+        )
+    clean = clean.iloc[-n:]
     arr = clean.to_numpy(dtype=np.float32)
 
     target = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # (1, 1, T)
     target_mask = torch.ones_like(target, dtype=torch.bool)
     series_ids = torch.zeros(1, 1, dtype=torch.long)
 
-    model = load_model(model_id, device=device)
     target = target.to(device)
     target_mask = target_mask.to(device)
     series_ids = series_ids.to(device)
