@@ -267,7 +267,13 @@ def refresh():
     else:
         nws_first = None
 
-    hero = hero_markdown(PLACE_NAME, week["history"], nws_first, DISPLAY_TZ, realtime=realtime)
+    hero = hero_markdown(
+        PLACE_NAME, week["history"], nws_first, DISPLAY_TZ,
+        realtime=realtime,
+        toto_temp=week["totos"].get("temp_f"),
+        nws_temp=week["nws_aligned"].get("temp_f"),
+        horizon_hours=1,
+    )
     if "temp_f" in week["totos"]:
         comparison_md = (
             "### 🆚 Toto vs NWS — same hour, side-by-side\n\n"

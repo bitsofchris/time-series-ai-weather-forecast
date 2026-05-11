@@ -65,12 +65,12 @@ def hero_markdown(
     nws_first: pd.Series | None,
     tz: str,
     realtime: dict | None = None,
+    toto_temp: TotoForecast | None = None,
+    nws_temp: pd.Series | None = None,
+    horizon_hours: int = 1,
 ) -> str:
-    """Two-row 'now' table: temperature only, with Ecowitt vs NWS this hour.
-
-    Prefers `realtime` (from /device/real_time) for the live reading because
-    the hourly bucket lags by up to 30 min on the GW3000B.
-    """
+    """Three-row 'now / N h-ahead' table: measured Ecowitt + each model's
+    prediction for the same wall-clock hour `horizon_hours` from now."""
     cur_temp: float | None = None
     when_ts: pd.Timestamp | None = None
 
@@ -87,29 +87,36 @@ def hero_markdown(
 
     eco_when = when_ts.tz_convert(tz).strftime("%-I:%M %p %Z, %a %b %-d")
 
-    nws_temp_str = "—"
-    nws_when = "—"
     glyph = "🌡"
-    gap_str = ""
     if nws_first is not None and not nws_first.empty:
-        idx0 = nws_first.index[0] if isinstance(nws_first, pd.DataFrame) else nws_first.name
-        if isinstance(idx0, pd.Timestamp):
-            nws_when = idx0.tz_convert(tz).strftime("%-I %p %Z, %a %b %-d")
         row = nws_first.iloc[0] if isinstance(nws_first, pd.DataFrame) else nws_first
-        if isinstance(row, pd.Series):
-            if "temp_f" in row and pd.notna(row["temp_f"]):
-                nws_temp_str = f"**{row['temp_f']:.0f}°F**"
-                gap = cur_temp - float(row["temp_f"])
-                sign = "+" if gap >= 0 else ""
-                gap_str = f" <span style='opacity:0.55'>(NWS off by {sign}{gap:.1f}°F)</span>"
-            if "short_forecast" in row:
-                glyph = emoji_for(str(row["short_forecast"]))
+        if isinstance(row, pd.Series) and "short_forecast" in row:
+            glyph = emoji_for(str(row["short_forecast"]))
+
+    target = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=horizon_hours)
+
+    def _nearest(series, target_ts):
+        if series is None or series.empty:
+            return None, None
+        idx = series.index.get_indexer([target_ts], method="nearest")[0]
+        if idx < 0 or idx >= len(series):
+            return None, None
+        return series.index[idx], float(series.iloc[idx])
+
+    toto_idx, toto_val = _nearest(toto_temp.median if toto_temp is not None else None, target)
+    nws_idx, nws_val = _nearest(nws_temp, target)
+
+    def _row(label: str, val: float | None, ts):
+        when = ts.tz_convert(tz).strftime("%-I %p %Z, %a %b %-d") if ts is not None else "—"
+        cell = f"**{val:.0f}°F**" if val is not None else "—"
+        return f"| {label} | {cell} | {when} |"
 
     table = (
         "| Source | Temperature | When |\n"
         "|---|---|---|\n"
-        f"| 📡 Ecowitt (measured) | **{cur_temp:.1f}°F** | {eco_when} |\n"
-        f"| 🌎 NWS forecast | {nws_temp_str}{gap_str} | {nws_when} |"
+        f"| 📡 Ecowitt (now) | **{cur_temp:.1f}°F** | {eco_when} |\n"
+        f"{_row(f'🤖 Toto ({horizon_hours} h-ahead)', toto_val, toto_idx)}\n"
+        f"{_row(f'🌎 NWS ({horizon_hours} h-ahead)', nws_val, nws_idx)}"
     )
     return f"### {glyph} {place}\n\n{table}"
 
