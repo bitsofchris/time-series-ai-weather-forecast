@@ -330,9 +330,19 @@ def render_scoreboard(conn) -> str:
                 d_cell = "—"
             rows.append(f"| **{lag_h} h-ahead** | {t_cell} | {n_cell} | {d_cell} |")
         if rows:
-            lines.append(f"**{label}**")
-            lines.append("| Lookahead | 🤖 Toto MAE | 🌎 NWS MAE | Δ |\n|---|---|---|---|")
-            lines.extend(rows)
+            # Build the whole table as one chunk — Markdown breaks the
+            # table if there's a blank line between the header and rows,
+            # and "\n\n".join below would insert exactly that.
+            table = "\n".join(
+                [
+                    f"**{label}**",
+                    "",
+                    "| Lookahead | 🤖 Toto MAE | 🌎 NWS MAE | Δ |",
+                    "|---|---|---|---|",
+                    *rows,
+                ]
+            )
+            lines.append(table)
     if not any_data:
         lines.append(
             "_No scored forecasts yet. The scoreboard fills in once forecasts have target hours that have already passed and matching Ecowitt actuals — typically within an hour or two of running._"
