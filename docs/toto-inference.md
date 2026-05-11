@@ -134,14 +134,63 @@ A second SQLite, `data/ecowitt.db`, is the all-channel raw archive
 (`bitsofchris/toto-weather-forecast-log`) on every autorefresh tick so
 they survive Space rebuilds.
 
-## Scoreboard
+## Scoreboard — how the accuracy is calculated
 
-For each (target_ts, source, metric) we keep the **most recent** forecast
-issued *before* that target hour, join against `actuals`, and report:
+The scoreboard answers one question: **over the last 48 hours, which model
+was closer to the actual reading at each hour?** The rules are designed so
+neither model gets to peek at data that wasn't available when the forecast
+was made.
+
+### Inputs
+
+- `actuals(target_ts, metric, value)` — Ecowitt readings resampled to the
+  current display cadence (hourly by default).
+- `forecast_snapshots(forecast_made_at, target_ts, source, metric, p10, p50, p90)`
+  — every forecast either model has ever issued, with two timestamps:
+    - `forecast_made_at` — when we ran inference / fetched NWS
+    - `target_ts` — the hour the forecast is predicting
+
+### Rule for picking which forecast counts
+
+For each `(target_ts, source, metric)`:
+
+1. Filter to forecasts whose `forecast_made_at <= target_ts` — i.e. the
+   model didn't yet know the actual value.
+2. Of those, pick the one with the **largest** `forecast_made_at` — the
+   most recent prediction issued *before* the target hour.
+
+So for any past hour, Toto and NWS are both scored on their *latest
+pre-target opinion*. Both models always have the same information cutoff;
+no foresight, no stale snapshots.
+
+### Aggregation
+
+Once each `(target_ts, source, metric)` triple has been pinned to a
+single forecast row:
 
 ```text
-MAE_source = mean(|p50 − actual|)  over last 48 h
+abs_err = |p50 − actual|
+MAE_source = mean(abs_err)   over target_ts in the last 48 h
+n          = count(matching pairs)
 ```
+
+The "lower is better" winner is whichever source has the smaller MAE for
+that metric. NWS doesn't expose pressure in `forecastHourly`, so the
+pressure scoreboard reports Toto only.
+
+### Caveats / what this scoreboard is NOT
+
+- We score the **point prediction** (`p50`) for both models. That throws
+  away Toto's uncertainty — a wider interval doesn't hurt or help its
+  MAE. A more Toto-flattering scoring would be CRPS or pinball loss,
+  which credits well-calibrated intervals. We can layer that in later;
+  MAE is what most people intuit by "accuracy", which is why it's
+  on the headline scoreboard.
+- The window is rolling 48 h, so the number you see depends on the last
+  two days, not all history.
+- We score every horizon distance lumped together. Toto's p50 at +6 h
+  vs at +24 h are both folded into the same MAE. Splitting by horizon
+  (1 h MAE, 6 h MAE, 24 h MAE, …) is a likely next iteration.
 
 The "Past forecasts" overlay on the chart uses the same query so the
 scoreboard number and the chart line refer to identical predictions.

@@ -354,6 +354,26 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     scoreboard_md = gr.Markdown()
     plot = gr.Plot(label="Forecast")
 
+    with gr.Accordion("How the scoreboard is calculated", open=False):
+        gr.Markdown(
+            "We score each model on **how close its prediction was to the actual Ecowitt reading** "
+            "for the same hour, averaged over the last 48 hours.\n\n"
+            "**Picking which forecast counts.** Every refresh logs both models' forecasts for the "
+            "next 24-72 hours along with `forecast_made_at` and `target_ts`. For each past target "
+            "hour we keep only the **most recent forecast issued *before* that hour** — so neither "
+            "model is allowed to peek at data it couldn't have seen at prediction time.\n\n"
+            "**The math.** For each metric, per source:\n\n"
+            "&nbsp;&nbsp;`abs_err = |p50 − actual|`\n\n"
+            "&nbsp;&nbsp;`MAE = mean(abs_err)` over target hours in the last 48 h\n\n"
+            "&nbsp;&nbsp;`n` = number of (target hour, source) pairs that had both a forecast and an Ecowitt actual\n\n"
+            "The lower MAE wins. NWS doesn't forecast barometric pressure, so the pressure row shows Toto only.\n\n"
+            "**What this is NOT.** We score the point prediction (p50) — which throws away Toto's "
+            "uncertainty. A scoring rule like CRPS or pinball loss would credit a well-calibrated "
+            "10–90% band; MAE doesn't. Folded across all horizons too — Toto's +6 h call and +24 h "
+            "call both contribute to the same number. Per-horizon breakdowns are a likely follow-up.\n\n"
+            "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md#scoreboard--how-the-accuracy-is-calculated)."
+        )
+
     with gr.Accordion("How the forecast is made", open=False):
         gr.Markdown(
             "**Model.** [Datadog/Toto-2.0-4m](https://huggingface.co/Datadog/Toto-2.0-4m) "
