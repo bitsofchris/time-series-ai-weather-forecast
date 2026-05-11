@@ -208,7 +208,7 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     else:
         history_for_toto = history
     nws_df_raw = fetch_nws(horizon_hours)
-    nws_df = _resample_nws_to(nws_df_raw, resample)
+    nws_df = _resample_nws_to(nws_df_raw, display_resample)
     last_actual = history.dropna(how="all").index.max()
     nws_future = nws_df[nws_df.index > last_actual] if last_actual is not None else nws_df
 
