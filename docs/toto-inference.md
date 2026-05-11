@@ -26,9 +26,10 @@ weakest model in the Toto-2.0 family doing something useful zero-shot; the
 | Station | Ecowitt GW3000B, Westhampton Beach NY |
 | Channels forecasted | `outdoor.temperature` (°F), `outdoor.humidity` (%), `pressure.relative` (inHg), `rainfall_piezo.rain_rate` (in/hr) |
 | Native storage cadence | **5 min** at `cycle_type=5min` (the device is configured to upload at ~1-min intervals; Ecowitt buckets to 5 min for the 90-day tier). Earlier defaults of 30 min were the device's out-of-box upload schedule. |
-| `cycle_type` requested | depends on the **Display cadence** dropdown — `30min` (default, resampled to 1 h or 30 min) or `4hour` |
-| History window pulled | 7 days for `30min` cycle, 30 days for `4hour` cycle |
-| Resampling | pandas `df.resample(R).mean()` where R matches the dropdown (`1h` / `30min` / `4h`) |
+| `cycle_type` requested | `5min` — finest tier the API exposes. The data lives in `data/ecowitt.db` (synced incrementally every 15 min); each refresh reads from the archive rather than hitting Ecowitt live. |
+| History window pulled from the archive | 7 days |
+| Resampling for the chart | `df.resample("5min").mean()` — fine-grained display |
+| Resampling for Toto inference | `df.resample("1h").mean()` — coarser series so the 4M model receives a 168-point context + 48-step horizon, the regime where it forecasts cleanly. Decoupling the chart cadence from the model cadence keeps the visual fine and the model output honest. |
 | Cleaning | `Series.interpolate(limit_direction="both")` fills resample gaps before the tensor goes to Toto |
 | NWS comparison | `https://api.weather.gov/points/{lat},{lon}` → `forecastHourly` (point forecast, no distribution) |
 
@@ -48,9 +49,10 @@ else:
     target_mask = [False]*pad + [True]*n_raw   # tell Toto to ignore the padded steps
 ```
 
-With ~10 days of station history and an hourly resample, this gives a
-context of ~160 hourly points (5 patches). On the `4hour` cycle the
-station's short history means we often hit the pad path.
+With ~7 days of archive history and the hourly resample we use for
+inference, this gives a context of 160 hourly points (5 patches). The
+chart shows the same 7 days at 5-min cadence (≈2 016 points) — but
+those raw points only feed the chart, not the model.
 
 ## Tensor shape
 
@@ -68,19 +70,11 @@ gets noisier and the post hook is easier to read one metric at a time.
 
 `horizon_steps = round(horizon_hours / step_hours)` where:
 
-| Display cadence | `step_hours` |
-|---|---|
-| Hourly | 1.0 |
-| 30-min | 0.5 |
-| 4-hour | 4.0 |
-
-| Horizon dropdown | `horizon_hours` |
-|---|---|
-| 24 h (default) | 24 |
-| 48 h | 48 |
-| 72 h | 72 |
-
-So default: 24 hourly steps. 4-hour cycle × 72 h = 18 steps (smallest). 30-min × 72 h = 144 steps (largest typical).
+`step_hours` is the **forecast cadence** (1 h), not the chart cadence
+(5 min). `horizon_hours = 48`, so `horizon_steps = 48`. The 48 hourly
+predictions get drawn on top of the 5-min historical line — the
+forecast line is therefore sparser than the actuals, but visually
+continuous because Plotly connects the anchor points.
 
 ## Distribution → quantiles
 
