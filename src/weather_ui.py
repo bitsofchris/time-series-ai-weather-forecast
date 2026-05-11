@@ -187,6 +187,7 @@ def combined_figure(
     nws_df: pd.DataFrame | None,
     metrics: list[dict],
     now: pd.Timestamp | None = None,
+    past_toto: dict[str, pd.DataFrame] | None = None,
 ) -> go.Figure:
     """Three stacked subplots sharing the x-axis."""
     fig = make_subplots(
@@ -212,6 +213,18 @@ def combined_figure(
             ),
             row=i, col=1,
         )
+        # Past Toto forecasts overlaid on actuals (historical side only).
+        if past_toto and col in past_toto:
+            pt = past_toto[col]
+            fig.add_trace(
+                go.Scatter(
+                    x=pt.index, y=pt["p50"].values,
+                    name="🤖 Toto (past forecasts)", mode="lines",
+                    line=dict(color="rgba(31,119,180,0.55)", width=1.5),
+                    showlegend=showlegend, legendgroup="toto-past",
+                ),
+                row=i, col=1,
+            )
         if toto is not None:
             fig.add_trace(
                 go.Scatter(

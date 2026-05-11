@@ -180,12 +180,31 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     visible_steps = int(round(hours / step_hours))
     visible_history = history.tail(visible_steps)
 
+    # Past Toto forecasts: for each past hour visible on the chart, the
+    # most-recent forecast we issued *before* that hour. Strictly capped at
+    # the most recent Ecowitt actual so the overlay never bleeds into the
+    # future portion of the chart.
+    since_unix = (
+        int(visible_history.index.min().timestamp()) if not visible_history.empty else None
+    )
+    until_unix = int(last_actual.timestamp()) if last_actual is not None else None
+    past_toto: dict[str, pd.DataFrame] = {}
+    for m in METRICS:
+        col = m["col"]
+        pt = forecast_log.historical_predictions(
+            log_conn, "toto", col,
+            since_unix=since_unix, until_unix=until_unix,
+        )
+        if not pt.empty:
+            past_toto[col] = pt
+
     fig = combined_figure(
         history=visible_history,
         totos=totos,
         nws_df=nws_future,
         metrics=METRICS,
         now=now,
+        past_toto=past_toto,
     )
     return {
         "fig": fig,

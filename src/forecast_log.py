@@ -165,14 +165,18 @@ def historical_predictions(
     source: str,
     metric: str,
     since_unix: int | None = None,
+    until_unix: int | None = None,
 ) -> pd.DataFrame:
-    """For each past target_ts, return the most-recent forecast issued for it.
+    """For each target_ts in [since, until], return the most-recent forecast
+    issued *before* that hour.
 
-    Useful for overlaying 'what we predicted vs what actually happened' on the
-    historical portion of the chart. Result is a DataFrame indexed by UTC
-    timestamp with columns p10, p50, p90 (NWS rows have NULL p10/p90).
+    `until_unix` defaults to now — pass it to cap the overlay so it doesn't
+    bleed into the future portion of the chart.
     """
-    params: list = [source, metric]
+    import time as _time  # noqa: PLC0415
+    if until_unix is None:
+        until_unix = int(_time.time())
+    params: list = [source, metric, until_unix]
     where_extra = ""
     if since_unix is not None:
         where_extra = " AND target_ts >= ?"
@@ -182,8 +186,10 @@ def historical_predictions(
         SELECT source, target_ts, metric,
                MAX(forecast_made_at) AS forecast_made_at
         FROM forecast_snapshots
-        WHERE source = ? AND metric = ? AND forecast_made_at <= target_ts
-        {where_extra}
+        WHERE source = ? AND metric = ?
+          AND forecast_made_at <= target_ts
+          AND target_ts <= ?
+          {where_extra}
         GROUP BY source, target_ts, metric
     )
     SELECT f.target_ts, f.p10, f.p50, f.p90
