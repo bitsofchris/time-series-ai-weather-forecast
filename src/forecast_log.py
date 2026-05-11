@@ -277,6 +277,61 @@ def historical_predictions(
     return df
 
 
+def residuals(
+    conn: sqlite3.Connection,
+    metric: str,
+    window_hours: int = 48,
+    lag_hours: float = 3.0,
+) -> pd.DataFrame:
+    """For each hourly target_ts in the last `window_hours`, return Toto's
+    and NWS's predictions and the Ecowitt actual side-by-side, plus signed
+    residuals (prediction − actual).
+
+    Both predictions are selected at a fixed lag from target_ts so the
+    residual time series compares like-with-like: 'how far off was each
+    model's N-hours-ahead prediction for this hour?'.
+    """
+    import time as _time  # noqa: PLC0415
+    now = int(_time.time())
+    cutoff = now - window_hours * 3600
+    lag_seconds = int(lag_hours * 3600)
+    sql = """
+    WITH ranked AS (
+        SELECT source, target_ts, p50,
+               ROW_NUMBER() OVER (
+                   PARTITION BY source, target_ts
+                   ORDER BY ABS(forecast_made_at - (target_ts - ?))
+               ) AS rk
+        FROM forecast_snapshots
+        WHERE metric = ?
+          AND forecast_made_at <= target_ts
+          AND target_ts BETWEEN ? AND ?
+    ),
+    picked AS (
+        SELECT source, target_ts, p50 FROM ranked WHERE rk = 1
+    )
+    SELECT a.target_ts,
+           MAX(CASE WHEN p.source='toto' THEN p.p50 END) AS toto_p50,
+           MAX(CASE WHEN p.source='nws'  THEN p.p50 END) AS nws_p50,
+           a.value AS actual
+    FROM actuals a
+    LEFT JOIN picked p USING (target_ts)
+    WHERE a.metric = ?
+      AND a.target_ts BETWEEN ? AND ?
+    GROUP BY a.target_ts
+    ORDER BY a.target_ts
+    """
+    params = [lag_seconds, metric, cutoff, now, metric, cutoff, now]
+    df = pd.read_sql_query(sql, conn, params=params)
+    if df.empty:
+        return df
+    df.index = pd.to_datetime(df["target_ts"], unit="s", utc=True)
+    df = df.drop(columns=["target_ts"])
+    df["toto_residual"] = df["toto_p50"] - df["actual"]
+    df["nws_residual"] = df["nws_p50"] - df["actual"]
+    return df
+
+
 def scoreboard_summary(
     conn: sqlite3.Connection,
     metric: str = "temp_f",

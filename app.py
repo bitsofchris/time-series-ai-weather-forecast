@@ -23,6 +23,7 @@ from src.weather_ui import (
     aligned_comparison_markdown,
     combined_figure,
     hero_markdown,
+    residual_figure,
 )
 
 AUTO_REFRESH_SECONDS = 15 * 60          # background tick + archive sync
@@ -280,8 +281,12 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
+    # Residual chart — past 48h of 3h-ahead temperature predictions vs actual.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=3.0)
+    resid_fig = residual_figure(resid_df) if not resid_df.empty else None
+
     persist.push_db_async()
-    return hero, comparison_md, week["fig"], scoreboard
+    return hero, comparison_md, week["fig"], scoreboard, resid_fig
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -418,6 +423,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     )
 
     scoreboard_md = gr.Markdown()
+    residual_plot = gr.Plot(label="Forecast residual")
 
     gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
     week_plot = gr.Plot(label="Weekly")
@@ -464,7 +470,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
-    outputs = [hero_md, comparison_md, week_plot, scoreboard_md]
+    outputs = [hero_md, comparison_md, week_plot, scoreboard_md, residual_plot]
     demo.load(refresh, outputs=outputs)
 
 

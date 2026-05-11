@@ -181,6 +181,41 @@ def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:
     return f"| {hours} |\n{sep}\n| {glyphs} |\n| {temps} |"
 
 
+def residual_figure(
+    df: pd.DataFrame,
+    title: str = "Forecast residual — 3h-ahead prediction minus Ecowitt actual (°F)",
+) -> go.Figure:
+    """Plot signed residuals over time for Toto and NWS. Zero is perfect."""
+    fig = go.Figure()
+    fig.add_hline(y=0, line=dict(color="#888", width=1))
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df["toto_residual"],
+            name="🤖 Toto residual", mode="lines+markers",
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=5),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df["nws_residual"],
+            name="🌎 NWS residual", mode="lines+markers",
+            line=dict(color="#d62728", width=2, dash="dash"),
+            marker=dict(size=5),
+        )
+    )
+    fig.update_layout(
+        title=title,
+        height=320,
+        hovermode="x unified",
+        yaxis_title="°F (signed error)",
+        margin=dict(l=50, r=20, t=50, b=50),
+        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="right", x=1),
+    )
+    fig.update_xaxes(tickformat="%b %-d\n%-I %p", showgrid=True)
+    return fig
+
+
 def combined_figure(
     history: pd.DataFrame,
     totos: dict[str, TotoForecast],
