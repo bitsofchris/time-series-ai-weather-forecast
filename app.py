@@ -281,8 +281,8 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Residual chart — past 48h of 3h-ahead temperature predictions vs actual.
-    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=3.0)
+    # Residual chart — same picks the scoreboard MAE uses, over the last 48h.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48)
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
