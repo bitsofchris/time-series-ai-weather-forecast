@@ -335,7 +335,24 @@ def render_scoreboard(conn) -> str:
 
     Rows = forecast lookahead (1h / 3h / 12h). Cols = Toto MAE, NWS MAE,
     delta. Pressure has no NWS forecast so its column is dashed."""
-    lines = ["### 📊 Forecast scoreboard (rolling 48 h MAE — lower is better)"]
+    started_row = conn.execute(
+        "SELECT MIN(forecast_made_at) FROM forecast_snapshots"
+    ).fetchone()
+    started_unix = started_row[0] if started_row and started_row[0] else None
+    started_str = (
+        datetime.fromtimestamp(started_unix, tz=timezone.utc)
+        .astimezone(__import__("zoneinfo").ZoneInfo(DISPLAY_TZ))
+        .strftime("%b %-d, %Y %-I:%M %p %Z")
+        if started_unix else "—"
+    )
+
+    lines = [
+        "### 📊 Forecast scoreboard (rolling 48 h MAE — lower is better)",
+        (
+            f"<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48 h window. "
+            f"Scoreboard started {started_str}.</span>"
+        ),
+    ]
     any_data = False
     for metric, label, unit in SCOREBOARD_METRICS:
         rows: list[str] = []
