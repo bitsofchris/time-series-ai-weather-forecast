@@ -186,46 +186,73 @@ def hero_gauges(
     nws_next: float | None,
     temp_range: tuple[float, float] = (20.0, 100.0),
 ) -> go.Figure:
-    """Three side-by-side gauges: current Ecowitt temperature, plus each
-    model's prediction for the next round hour. Each forecast gauge also
-    shows its delta vs the current reading."""
-    cool_to_warm = [
-        {"range": [20, 40], "color": "rgba(31,119,180,0.18)"},
-        {"range": [40, 60], "color": "rgba(31,119,180,0.08)"},
-        {"range": [60, 80], "color": "rgba(214,39,40,0.08)"},
-        {"range": [80, 100], "color": "rgba(214,39,40,0.18)"},
+    """Three horizontal bar 'thermometers' stacked vertically — readable
+    on mobile portrait without squishing. Cool/warm background bands
+    give a sense of where on the temperature scale each value sits."""
+    rows = [
+        ("📡 Ecowitt (now)", cur_temp, "#222", None),
+        ("🤖 Toto (next hr)", toto_next, "#1f77b4", cur_temp),
+        ("🌎 NWS (next hr)", nws_next, "#d62728", cur_temp),
     ]
-    specs = [[{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}]]
-    fig = make_subplots(rows=1, cols=3, specs=specs)
 
-    def _ind(value, title, bar_color, with_delta: bool):
-        ind = go.Indicator(
-            mode="gauge+number+delta" if with_delta else "gauge+number",
-            value=value if value is not None else float("nan"),
-            title={"text": title, "font": {"size": 14}},
-            number={"suffix": " °F", "font": {"size": 30}},
-            gauge=dict(
-                axis=dict(range=list(temp_range), tickwidth=1, tickcolor="#888"),
-                bar=dict(color=bar_color, thickness=0.25),
-                bgcolor="white",
-                borderwidth=1,
-                bordercolor="#e0e0e0",
-                steps=cool_to_warm,
-                threshold=dict(line=dict(color=bar_color, width=4), value=value or 0),
-            ),
-            delta=(
-                dict(reference=cur_temp, suffix=" °F", increasing={"color": "#d62728"}, decreasing={"color": "#1f77b4"})
-                if with_delta else None
-            ),
+    fig = go.Figure()
+    lo, hi = temp_range
+    # Background shading: cooler on the left, warmer on the right.
+    for x0, x1, color in [
+        (lo, lo + (hi - lo) * 0.25, "rgba(31,119,180,0.18)"),
+        (lo + (hi - lo) * 0.25, lo + (hi - lo) * 0.50, "rgba(31,119,180,0.08)"),
+        (lo + (hi - lo) * 0.50, lo + (hi - lo) * 0.75, "rgba(214,39,40,0.08)"),
+        (lo + (hi - lo) * 0.75, hi, "rgba(214,39,40,0.18)"),
+    ]:
+        fig.add_shape(
+            type="rect",
+            x0=x0, x1=x1, y0=-0.5, y1=len(rows) - 0.5,
+            fillcolor=color, line=dict(width=0),
+            layer="below",
         )
-        return ind
 
-    fig.add_trace(_ind(cur_temp, "📡 Ecowitt (now)", "#222", False), row=1, col=1)
-    fig.add_trace(_ind(toto_next, "🤖 Toto (next hour)", "#1f77b4", True), row=1, col=2)
-    fig.add_trace(_ind(nws_next, "🌎 NWS (next hour)", "#d62728", True), row=1, col=3)
+    y_labels = [r[0] for r in rows]
+    for label, value, color, ref in rows:
+        if value is None or (isinstance(value, float) and value != value):
+            # No data — skip the bar but keep the row label by drawing 0-length.
+            fig.add_trace(go.Bar(
+                y=[label], x=[lo], orientation="h",
+                marker_color="rgba(0,0,0,0)",
+                text=["—"], textposition="outside",
+                textfont=dict(size=14, color="#888"),
+                showlegend=False, hoverinfo="skip",
+            ))
+            continue
+        suffix = ""
+        if ref is not None:
+            d = value - ref
+            sign = "+" if d >= 0 else ""
+            suffix = f"  <span style='color:#888'>({sign}{d:.1f})</span>"
+        fig.add_trace(go.Bar(
+            y=[label], x=[value - lo], base=[lo], orientation="h",
+            marker=dict(color=color, line=dict(color=color, width=0)),
+            text=[f"<b>{value:.1f}°F</b>{suffix}"],
+            textposition="outside",
+            textfont=dict(size=14),
+            cliponaxis=False,
+            showlegend=False,
+            hovertemplate=f"{label}: %{{x:.1f}}°F<extra></extra>",
+        ))
+
+    fig.update_xaxes(
+        range=[lo, hi], title_text="°F",
+        showgrid=True, gridcolor="rgba(0,0,0,0.08)",
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        categoryorder="array", categoryarray=list(reversed(y_labels)),
+        showgrid=False,
+    )
     fig.update_layout(
-        height=260,
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=240,
+        margin=dict(l=130, r=90, t=20, b=40),
+        bargap=0.35,
+        plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
