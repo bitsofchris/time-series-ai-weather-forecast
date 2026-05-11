@@ -288,14 +288,22 @@ def combined_figure(
     fig.update_layout(
         height=900,
         hovermode="x unified",
-        margin=dict(l=50, r=20, t=50, b=60),
-        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="right", x=1),
+        margin=dict(l=50, r=20, t=90, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="right", x=1),
     )
-    # Explicit date + hour on the x-axis so the reader doesn't have to guess
-    # what day a tick refers to.
+    # Default styling for every x-axis (grid + tick format), then move the
+    # tick labels off the bottom subplot and onto the top one. That way the
+    # reader sees what day/time each column represents on the first chart
+    # (Outdoor temperature) without having to scroll all the way to pressure.
     fig.update_xaxes(
         tickformat="%b %-d\n%-I %p",
         ticklabelmode="instant",
         showgrid=True,
+        showticklabels=False,
+    )
+    fig.update_xaxes(
+        row=1, col=1,
+        side="top",
+        showticklabels=True,
     )
     return fig
