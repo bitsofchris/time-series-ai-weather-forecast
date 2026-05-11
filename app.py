@@ -22,7 +22,6 @@ from src.forecast import forecast_series
 from src.weather_ui import (
     aligned_comparison_markdown,
     combined_figure,
-    emoji_strip_markdown,
     hero_markdown,
 )
 
@@ -224,14 +223,13 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
         )
     else:
         comparison_md = ""
-    strip = emoji_strip_markdown(nws_df_raw, DISPLAY_TZ, n=12)
     scoreboard = render_scoreboard(log_conn)
 
     # Backup forecast log to HF Dataset (non-blocking).
     persist.push_db_async()
     # The full archive sync + push happens in the autorefresh thread.
 
-    return hero, comparison_md, strip, fig, scoreboard
+    return hero, comparison_md, fig, scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -329,7 +327,21 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
 
     hero_md = gr.Markdown()
     comparison_md = gr.Markdown()
-    strip_md = gr.Markdown()
+    gr.HTML(
+        # KOKX is the NWS radar site at Upton, NY — covers Long Island incl.
+        # Westhampton Beach. The looped GIF refreshes itself on the browser
+        # so the map stays live without us doing anything.
+        '<div style="text-align:center;margin:0.5em 0;">'
+        '<a href="https://radar.weather.gov/station/kokx/standard" target="_blank" rel="noopener">'
+        '<img src="https://radar.weather.gov/ridge/standard/KOKX_loop.gif" '
+        'alt="NWS radar loop, Long Island (KOKX)" '
+        'style="max-width:560px;width:100%;border-radius:6px;border:1px solid #e0e0e0;" />'
+        '</a>'
+        '<div style="opacity:0.55;font-size:0.85em;margin-top:0.3em;">'
+        'NWS radar loop · station KOKX (Upton, NY) · refreshes ~6 min'
+        '</div>'
+        '</div>'
+    )
 
     with gr.Row():
         cycle_dd = gr.Dropdown(
@@ -369,7 +381,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
-    outputs = [hero_md, comparison_md, strip_md, plot, scoreboard_md]
+    outputs = [hero_md, comparison_md, plot, scoreboard_md]
     inputs = [cycle_dd, horizon_dd]
     demo.load(refresh, inputs=inputs, outputs=outputs)
     cycle_dd.change(refresh, inputs=inputs, outputs=outputs)
