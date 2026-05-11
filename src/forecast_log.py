@@ -281,32 +281,30 @@ def residuals(
     conn: sqlite3.Connection,
     metric: str,
     window_hours: int = 48,
+    lag_hours: float = 3.0,
 ) -> pd.DataFrame:
     """For each hourly target_ts in the last `window_hours`, return each
-    model's prediction and the Ecowitt actual side-by-side, plus signed
-    residuals (prediction − actual).
-
-    Uses the SAME 'latest forecast issued before the target hour' rule the
-    scoreboard MAE uses, so the time-series residuals add up to the
-    aggregate number on the scoreboard.
+    model's prediction (picked at a fixed lookahead) and the Ecowitt
+    actual side-by-side, plus signed residuals (prediction − actual).
     """
     import time as _time  # noqa: PLC0415
     now = int(_time.time())
     cutoff = now - window_hours * 3600
+    lag_seconds = int(lag_hours * 3600)
     sql = """
-    WITH latest AS (
-        SELECT source, target_ts, MAX(forecast_made_at) AS forecast_made_at
+    WITH ranked AS (
+        SELECT source, target_ts, p50,
+               ROW_NUMBER() OVER (
+                   PARTITION BY source, target_ts
+                   ORDER BY ABS(forecast_made_at - (target_ts - ?))
+               ) AS rk
         FROM forecast_snapshots
         WHERE metric = ?
           AND forecast_made_at <= target_ts
           AND target_ts BETWEEN ? AND ?
-        GROUP BY source, target_ts
     ),
     picked AS (
-        SELECT f.source, f.target_ts, f.p50
-        FROM forecast_snapshots f
-        JOIN latest l USING (source, target_ts, forecast_made_at)
-        WHERE f.metric = ?
+        SELECT source, target_ts, p50 FROM ranked WHERE rk = 1
     )
     SELECT a.target_ts,
            MAX(CASE WHEN p.source='toto' THEN p.p50 END) AS toto_p50,
@@ -319,7 +317,7 @@ def residuals(
     GROUP BY a.target_ts
     ORDER BY a.target_ts
     """
-    params = [metric, cutoff, now, metric, metric, cutoff, now]
+    params = [lag_seconds, metric, cutoff, now, metric, cutoff, now]
     df = pd.read_sql_query(sql, conn, params=params)
     if df.empty:
         return df
@@ -343,3 +341,45 @@ def scoreboard_summary(
         .agg(n="count", mae="mean")
         .reset_index()
     )
+
+
+def scoreboard_at_lag(
+    conn: sqlite3.Connection,
+    metric: str,
+    lag_hours: float,
+    window_hours: int = 48,
+) -> pd.DataFrame:
+    """Per-source MAE at a specific forecast lookahead.
+
+    For each past target hour in the window, pick each source's forecast
+    whose `forecast_made_at` is closest to `target_ts - lag_hours`. With
+    autorefresh ticking every 15 min that picker selects a forecast within
+    ~7-8 min of the requested lag, so the MAE genuinely reflects the
+    'how good was the N-hours-ahead prediction?' question.
+    """
+    import time as _time  # noqa: PLC0415
+    lag_seconds = int(lag_hours * 3600)
+    now = int(_time.time())
+    cutoff = now - window_hours * 3600
+    sql = """
+    WITH ranked AS (
+        SELECT source, target_ts, forecast_made_at, p50,
+               ROW_NUMBER() OVER (
+                   PARTITION BY source, target_ts
+                   ORDER BY ABS(forecast_made_at - (target_ts - ?))
+               ) AS rk
+        FROM forecast_snapshots
+        WHERE metric = ?
+          AND forecast_made_at <= target_ts
+          AND target_ts BETWEEN ? AND ?
+    )
+    SELECT r.source,
+           COUNT(*) AS n,
+           AVG(ABS(r.p50 - a.value)) AS mae
+    FROM ranked r
+    JOIN actuals a USING (target_ts)
+    WHERE r.rk = 1 AND a.metric = ?
+    GROUP BY r.source
+    """
+    df = pd.read_sql_query(sql, conn, params=[lag_seconds, metric, cutoff, now, metric])
+    return df

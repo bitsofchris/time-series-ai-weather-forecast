@@ -281,8 +281,9 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Residual chart — same picks the scoreboard MAE uses, over the last 48h.
-    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48)
+    # Residual chart — pinned to 3 h-ahead (the middle row of the scoreboard
+    # table) so the picture matches one of the headline numbers.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=3.0)
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
@@ -290,31 +291,48 @@ def refresh():
 
 
 # --- scoreboard ----------------------------------------------------------
+SCOREBOARD_HORIZONS_H = [1, 3, 12]
+SCOREBOARD_METRICS = [
+    ("temp_f", "Temperature", "°F"),
+    ("humidity", "Humidity", "%"),
+    ("pressure_inhg", "Pressure", "inHg"),
+]
+
+
 def render_scoreboard(conn) -> str:
-    lines = ["### 📊 Forecast scoreboard (rolling 48h MAE — lower is better)"]
+    """Per-metric, per-lookahead MAE table.
+
+    Rows = forecast lookahead (1h / 3h / 12h). Cols = Toto MAE, NWS MAE,
+    delta. Pressure has no NWS forecast so its column is dashed."""
+    lines = ["### 📊 Forecast scoreboard (rolling 48 h MAE — lower is better)"]
     any_data = False
-    for metric, label, unit in [
-        ("temp_f", "Temperature", "°F"),
-        ("humidity", "Humidity", "%"),
-        ("pressure_inhg", "Pressure", "inHg"),
-    ]:
-        summ = forecast_log.scoreboard_summary(conn, metric=metric, window_hours=48)
-        if summ.empty:
-            continue
-        any_data = True
-        by = {row["source"]: row for _, row in summ.iterrows()}
-        toto = by.get("toto")
-        nws_row = by.get("nws")
-        parts = [f"**{label}**"]
-        if toto is not None:
-            parts.append(f"Toto **{toto['mae']:.2f} {unit}** _(n={int(toto['n'])})_")
-        if nws_row is not None:
-            parts.append(f"NWS **{nws_row['mae']:.2f} {unit}** _(n={int(nws_row['n'])})_")
-        if toto is not None and nws_row is not None:
-            diff = toto["mae"] - nws_row["mae"]
-            winner = "🤖 Toto" if diff < 0 else "🌎 NWS"
-            parts.append(f"→ **{winner}** wins by {abs(diff):.2f} {unit}")
-        lines.append(" · ".join(parts))
+    for metric, label, unit in SCOREBOARD_METRICS:
+        rows: list[str] = []
+        for lag_h in SCOREBOARD_HORIZONS_H:
+            df = forecast_log.scoreboard_at_lag(
+                conn, metric=metric, lag_hours=lag_h, window_hours=48,
+            )
+            if df.empty:
+                continue
+            any_data = True
+            by = {r["source"]: r for _, r in df.iterrows()}
+            toto = by.get("toto")
+            nws_row = by.get("nws")
+            t_cell = f"**{toto['mae']:.2f} {unit}** _(n={int(toto['n'])})_" if toto is not None else "—"
+            n_cell = f"**{nws_row['mae']:.2f} {unit}** _(n={int(nws_row['n'])})_" if nws_row is not None else "—"
+            if toto is not None and nws_row is not None:
+                diff = toto["mae"] - nws_row["mae"]
+                winner = "🤖 Toto" if diff < 0 else "🌎 NWS"
+                d_cell = f"**{winner}** by {abs(diff):.2f} {unit}"
+            elif toto is not None:
+                d_cell = "—"
+            else:
+                d_cell = "—"
+            rows.append(f"| **{lag_h} h-ahead** | {t_cell} | {n_cell} | {d_cell} |")
+        if rows:
+            lines.append(f"**{label}**")
+            lines.append("| Lookahead | 🤖 Toto MAE | 🌎 NWS MAE | Δ |\n|---|---|---|---|")
+            lines.extend(rows)
     if not any_data:
         lines.append(
             "_No scored forecasts yet. The scoreboard fills in once forecasts have target hours that have already passed and matching Ecowitt actuals — typically within an hour or two of running._"
