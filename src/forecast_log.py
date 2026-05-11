@@ -191,37 +191,84 @@ def historical_predictions(
     metric: str,
     since_unix: int | None = None,
     until_unix: int | None = None,
+    lag_hours: float | None = 6.0,
 ) -> pd.DataFrame:
-    """For each target_ts in [since, until], return the most-recent forecast
-    issued *before* that hour.
+    """For each target_ts in [since, until], return one historical forecast row.
 
-    `until_unix` defaults to now — pass it to cap the overlay so it doesn't
-    bleed into the future portion of the chart.
+    Two modes:
+
+    - `lag_hours=None`: legacy 'latest-pre-target' behavior — for each
+      target hour, return the most-recent forecast issued before it. This
+      mixes different forecast lags depending on autorefresh timing, which
+      visually produces a sawtooth on the overlay.
+
+    - `lag_hours=N` (default 6.0): for each target hour, return the
+      forecast whose `forecast_made_at` is closest to `target_ts − N
+      hours`. Constant lag = consistent prediction difficulty = smooth
+      line on the chart. Semantics: 'what did Toto predict for this hour,
+      N hours before it happened?'.
+
+    `until_unix` defaults to now and caps the overlay so it never crosses
+    into the future side of the chart.
     """
     import time as _time  # noqa: PLC0415
     if until_unix is None:
         until_unix = int(_time.time())
-    params: list = [source, metric, until_unix]
-    where_extra = ""
-    if since_unix is not None:
-        where_extra = " AND target_ts >= ?"
-        params.append(since_unix)
-    sql = f"""
-    WITH latest AS (
-        SELECT source, target_ts, metric,
-               MAX(forecast_made_at) AS forecast_made_at
-        FROM forecast_snapshots
-        WHERE source = ? AND metric = ?
-          AND forecast_made_at <= target_ts
-          AND target_ts <= ?
-          {where_extra}
-        GROUP BY source, target_ts, metric
-    )
-    SELECT f.target_ts, f.p10, f.p50, f.p90
-    FROM forecast_snapshots f
-    JOIN latest l USING (source, target_ts, metric, forecast_made_at)
-    ORDER BY f.target_ts
-    """
+
+    if lag_hours is None:
+        # Original 'latest before target' query.
+        params: list = [source, metric, until_unix]
+        where_extra = ""
+        if since_unix is not None:
+            where_extra = " AND target_ts >= ?"
+            params.append(since_unix)
+        sql = f"""
+        WITH latest AS (
+            SELECT source, target_ts, metric,
+                   MAX(forecast_made_at) AS forecast_made_at
+            FROM forecast_snapshots
+            WHERE source = ? AND metric = ?
+              AND forecast_made_at <= target_ts
+              AND target_ts <= ?
+              {where_extra}
+            GROUP BY source, target_ts, metric
+        )
+        SELECT f.target_ts, f.p10, f.p50, f.p90
+        FROM forecast_snapshots f
+        JOIN latest l USING (source, target_ts, metric, forecast_made_at)
+        ORDER BY f.target_ts
+        """
+    else:
+        # Fixed-horizon pick: forecast_made_at closest to target_ts − lag.
+        lag_seconds = int(lag_hours * 3600)
+        params = [lag_seconds, source, metric, until_unix]
+        where_extra = ""
+        if since_unix is not None:
+            where_extra = " AND target_ts >= ?"
+            params.append(since_unix)
+        sql = f"""
+        WITH ranked AS (
+            SELECT target_ts, forecast_made_at, p10, p50, p90,
+                   ABS(forecast_made_at - (target_ts - ?)) AS lag_err,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY target_ts
+                       ORDER BY ABS(forecast_made_at - (target_ts - ?))
+                   ) AS rk
+            FROM forecast_snapshots
+            WHERE source = ? AND metric = ?
+              AND forecast_made_at <= target_ts
+              AND target_ts <= ?
+              {where_extra}
+        )
+        SELECT target_ts, p10, p50, p90
+        FROM ranked
+        WHERE rk = 1
+        ORDER BY target_ts
+        """
+        # The window function references the lag twice — easier to pass it
+        # twice than juggle indexes in the prepared statement.
+        params.insert(1, lag_seconds)
+
     df = pd.read_sql_query(sql, conn, params=params)
     if df.empty:
         return df

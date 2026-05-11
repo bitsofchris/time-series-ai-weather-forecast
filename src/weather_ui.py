@@ -214,12 +214,15 @@ def combined_figure(
             row=i, col=1,
         )
         # Past Toto forecasts overlaid on actuals (historical side only).
+        # Each point is Toto's prediction issued at a fixed lag before its
+        # target hour (default 6h-ahead) — so the line shows model error at
+        # a consistent forecast horizon, not a mix of lags.
         if past_toto and col in past_toto:
             pt = past_toto[col]
             fig.add_trace(
                 go.Scatter(
                     x=pt.index, y=pt["p50"].values,
-                    name="🤖 Toto (past forecasts)", mode="lines",
+                    name="🤖 Toto (6h-ahead, past)", mode="lines",
                     line=dict(color="rgba(31,119,180,0.55)", width=1.5),
                     showlegend=showlegend, legendgroup="toto-past",
                 ),
