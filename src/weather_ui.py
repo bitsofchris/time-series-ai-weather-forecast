@@ -110,7 +110,7 @@ def hero_markdown(
 
     def _row(label: str, val: float | None, ts):
         when = ts.tz_convert(tz).strftime("%-I %p %Z, %a %b %-d") if ts is not None else "—"
-        cell = f"**{val:.0f}°F**" if val is not None else "—"
+        cell = f"**{val:.1f}°F**" if val is not None else "—"
         return f"| {label} | {cell} | {when} |"
 
     table = (
@@ -178,84 +178,6 @@ def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:
     temps = " | ".join(f"{t:.0f}°" for t in df["temp_f"])
     sep = "|---" * len(df) + "|"
     return f"| {hours} |\n{sep}\n| {glyphs} |\n| {temps} |"
-
-
-def hero_gauges(
-    cur_temp: float,
-    toto_next: float | None,
-    nws_next: float | None,
-    temp_range: tuple[float, float] = (20.0, 100.0),
-) -> go.Figure:
-    """Three horizontal bar 'thermometers' stacked vertically — readable
-    on mobile portrait without squishing. Cool/warm background bands
-    give a sense of where on the temperature scale each value sits."""
-    rows = [
-        ("📡 Ecowitt (now)", cur_temp, "#222", None),
-        ("🤖 Toto (next hr)", toto_next, "#1f77b4", cur_temp),
-        ("🌎 NWS (next hr)", nws_next, "#d62728", cur_temp),
-    ]
-
-    fig = go.Figure()
-    lo, hi = temp_range
-    # Background shading: cooler on the left, warmer on the right.
-    for x0, x1, color in [
-        (lo, lo + (hi - lo) * 0.25, "rgba(31,119,180,0.18)"),
-        (lo + (hi - lo) * 0.25, lo + (hi - lo) * 0.50, "rgba(31,119,180,0.08)"),
-        (lo + (hi - lo) * 0.50, lo + (hi - lo) * 0.75, "rgba(214,39,40,0.08)"),
-        (lo + (hi - lo) * 0.75, hi, "rgba(214,39,40,0.18)"),
-    ]:
-        fig.add_shape(
-            type="rect",
-            x0=x0, x1=x1, y0=-0.5, y1=len(rows) - 0.5,
-            fillcolor=color, line=dict(width=0),
-            layer="below",
-        )
-
-    y_labels = [r[0] for r in rows]
-    for label, value, color, ref in rows:
-        if value is None or (isinstance(value, float) and value != value):
-            # No data — skip the bar but keep the row label by drawing 0-length.
-            fig.add_trace(go.Bar(
-                y=[label], x=[lo], orientation="h",
-                marker_color="rgba(0,0,0,0)",
-                text=["—"], textposition="outside",
-                textfont=dict(size=14, color="#888"),
-                showlegend=False, hoverinfo="skip",
-            ))
-            continue
-        suffix = ""
-        if ref is not None:
-            d = value - ref
-            sign = "+" if d >= 0 else ""
-            suffix = f"  <span style='color:#888'>({sign}{d:.1f})</span>"
-        fig.add_trace(go.Bar(
-            y=[label], x=[value - lo], base=[lo], orientation="h",
-            marker=dict(color=color, line=dict(color=color, width=0)),
-            text=[f"<b>{value:.1f}°F</b>{suffix}"],
-            textposition="outside",
-            textfont=dict(size=14),
-            cliponaxis=False,
-            showlegend=False,
-            hovertemplate=f"{label}: %{{x:.1f}}°F<extra></extra>",
-        ))
-
-    fig.update_xaxes(
-        range=[lo, hi], title_text="°F",
-        showgrid=True, gridcolor="rgba(0,0,0,0.08)",
-        zeroline=False,
-    )
-    fig.update_yaxes(
-        categoryorder="array", categoryarray=list(reversed(y_labels)),
-        showgrid=False,
-    )
-    fig.update_layout(
-        height=240,
-        margin=dict(l=130, r=90, t=20, b=40),
-        bargap=0.35,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    return fig
 
 
 def residual_figure(
