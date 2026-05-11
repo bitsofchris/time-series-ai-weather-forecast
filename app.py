@@ -30,15 +30,21 @@ CACHE_TTL_SECONDS = AUTO_REFRESH_SECONDS - 60  # so autorefresh always refetches
 DISPLAY_TZ = os.environ.get("DISPLAY_TZ", "America/New_York")
 PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
-# Display cadence options. Each maps to (Ecowitt cycle_type, pandas resample,
-# history_days). The GW3000B uploads every 30 min, so '5min' cycle resamples
-# to 30min anyway — included for completeness.
-CYCLE_CONFIG: dict[str, tuple[str, str, int]] = {
-    "Hourly":   ("30min", "1h",    7),
-    "30-min":   ("30min", "30min", 7),
-    "4-hour":   ("4hour", "4h",    30),
+# Two fixed views — no more dropdowns.
+VIEW_ZOOM = {
+    "label": "Last 36 h · 12 h forecast (30-min cadence)",
+    "cycle_type": "30min",
+    "resample": "30min",
+    "history_hours": 36,
+    "horizon_hours": 12,
 }
-HORIZON_CONFIG: dict[str, int] = {"24 h": 24, "48 h": 48, "72 h": 72}
+VIEW_WEEK = {
+    "label": "Past 7 days · 72 h forecast (hourly cadence)",
+    "cycle_type": "30min",
+    "resample": "1h",
+    "history_days": 7,
+    "horizon_hours": 72,
+}
 
 METRICS = [
     {"col": "temp_f",        "title": "Outdoor temperature", "y": "°F",     "nws_col": "temp_f"},
@@ -69,10 +75,10 @@ def cached(ttl: int):
 
 # --- data fetchers --------------------------------------------------------
 @cached(CACHE_TTL_SECONDS)
-def fetch_history(cycle_type: str, resample: str, days: int) -> pd.DataFrame:
+def fetch_history(cycle_type: str, resample: str, hours: float) -> pd.DataFrame:
     cfg = ecowitt.EcowittConfig.from_env()
     end = datetime.now(timezone.utc).replace(tzinfo=None)
-    start = end - timedelta(days=days)
+    start = end - timedelta(hours=hours)
     raw = ecowitt.fetch_history(
         cfg, start, end, cycle_type=cycle_type,
         call_back="outdoor,pressure,rainfall_piezo",
@@ -142,33 +148,24 @@ def _resample_nws_to(nws_df: pd.DataFrame, resample: str) -> pd.DataFrame:
 
 
 # --- main refresh ---------------------------------------------------------
-def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
-    cycle_type, resample, hist_days = CYCLE_CONFIG[cycle_label]
-    horizon_hours = HORIZON_CONFIG[horizon_label]
+def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
+    """Fetch + forecast for one view config. Returns intermediate pieces so
+    the caller can stitch the page together."""
+    cycle_type = view["cycle_type"]
+    resample = view["resample"]
     step_hours = _resample_hours(resample)
+    horizon_hours = view["horizon_hours"]
     horizon_steps = max(1, int(round(horizon_hours / step_hours)))
+    hours = view["history_hours"] if "history_hours" in view else view["history_days"] * 24
 
-    history = fetch_history(cycle_type, resample, hist_days)
-    realtime = fetch_realtime_snapshot()
+    history = fetch_history(cycle_type, resample, hours)
     nws_df_raw = fetch_nws(horizon_hours)
     nws_df = _resample_nws_to(nws_df_raw, resample)
-
     last_actual = history.dropna(how="all").index.max()
     nws_future = nws_df[nws_df.index > last_actual] if last_actual is not None else nws_df
 
-    # The NWS response often starts with a period that began in the past
-    # (forecasts are issued every ~hour but each period is 1h long). For
-    # the hero, find the period that *contains* "now".
-    now_utc = pd.Timestamp.now(tz="UTC")
-    if not nws_df_raw.empty:
-        covering = nws_df_raw[nws_df_raw.index <= now_utc]
-        nws_first = covering.tail(1) if not covering.empty else nws_df_raw.head(1)
-    else:
-        nws_first = None
-
-    # Log to SQLite (always at the chosen cadence)
-    log_conn = forecast_log.connect()
-    forecast_log.record_actuals(log_conn, history)
+    if log_to_scoreboard:
+        forecast_log.record_actuals(log_conn, history)
 
     totos: dict[str, object] = {}
     nws_aligned: dict[str, pd.Series] = {}
@@ -178,18 +175,17 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
             continue
         toto = forecast_series(series, horizon=horizon_steps)
         totos[m["col"]] = toto
-        forecast_log.record_toto(log_conn, m["col"], toto)
+        if log_to_scoreboard:
+            forecast_log.record_toto(log_conn, m["col"], toto)
         if m["nws_col"] and m["nws_col"] in nws_future.columns:
             ns = nws_future[m["nws_col"]].dropna()
             nws_aligned[m["col"]] = ns
-            forecast_log.record_nws(log_conn, m["col"], ns)
+            if log_to_scoreboard:
+                forecast_log.record_nws(log_conn, m["col"], ns)
 
-    now = pd.Timestamp.now(tz="UTC").floor("h")
-
-    # Look back: for each metric, build a series of past predictions issued
-    # for actual hours that have already passed. Lets us overlay what each
-    # model thought vs what happened.
-    visible_history = history.tail(int(hist_days * 24 / step_hours))
+    now = pd.Timestamp.now(tz="UTC").floor(resample)
+    visible_steps = int(round(hours / step_hours))
+    visible_history = history.tail(visible_steps)
     since_unix = (
         int(visible_history.index.min().timestamp()) if not visible_history.empty else None
     )
@@ -208,23 +204,49 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
         now=now,
         past_toto=past_toto,
     )
+    return {
+        "fig": fig,
+        "history": history,
+        "totos": totos,
+        "nws_aligned": nws_aligned,
+        "nws_df_raw": nws_df_raw,
+    }
 
-    hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ, realtime=realtime)
-    if "temp_f" in totos:
-        comparison_md = "### 🆚 24-hour temperature forecast — same hour, side-by-side\n\n" + aligned_comparison_markdown(
-            toto=totos["temp_f"],
-            nws_temp=nws_aligned.get("temp_f"),
-            tz=DISPLAY_TZ,
+
+def refresh():
+    realtime = fetch_realtime_snapshot()
+    log_conn = forecast_log.connect()
+
+    # Weekly view is the canonical one logged to the scoreboard (hourly
+    # cadence keeps target_ts aligned with NWS hourly periods).
+    week = _build_view(VIEW_WEEK, log_conn, log_to_scoreboard=True)
+    zoom = _build_view(VIEW_ZOOM, log_conn, log_to_scoreboard=False)
+
+    # Hero uses the weekly history + the NWS period containing "now".
+    nws_df_raw = week["nws_df_raw"]
+    now_utc = pd.Timestamp.now(tz="UTC")
+    if not nws_df_raw.empty:
+        covering = nws_df_raw[nws_df_raw.index <= now_utc]
+        nws_first = covering.tail(1) if not covering.empty else nws_df_raw.head(1)
+    else:
+        nws_first = None
+
+    hero = hero_markdown(PLACE_NAME, week["history"], nws_first, DISPLAY_TZ, realtime=realtime)
+    if "temp_f" in week["totos"]:
+        comparison_md = (
+            "### 🆚 24-hour temperature forecast — same hour, side-by-side\n\n"
+            + aligned_comparison_markdown(
+                toto=week["totos"]["temp_f"],
+                nws_temp=week["nws_aligned"].get("temp_f"),
+                tz=DISPLAY_TZ,
+            )
         )
     else:
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Backup forecast log to HF Dataset (non-blocking).
     persist.push_db_async()
-    # The full archive sync + push happens in the autorefresh thread.
-
-    return hero, comparison_md, fig, scoreboard
+    return hero, comparison_md, zoom["fig"], week["fig"], scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -338,21 +360,17 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
         '</div>'
     )
 
-    with gr.Row():
-        cycle_dd = gr.Dropdown(
-            choices=list(CYCLE_CONFIG.keys()), value="Hourly",
-            label="Display cadence", scale=1,
-        )
-        horizon_dd = gr.Dropdown(
-            choices=list(HORIZON_CONFIG.keys()), value="24 h",
-            label="Forecast horizon", scale=1,
-        )
     gr.Markdown(
         "<span style='opacity:0.55'>🔄 Live data + forecast auto-refresh every 15 minutes.</span>"
     )
 
     scoreboard_md = gr.Markdown()
-    plot = gr.Plot(label="Forecast")
+
+    gr.Markdown(f"### 🔍 Zoomed-in view — {VIEW_ZOOM['label']}")
+    zoom_plot = gr.Plot(label="Zoomed-in")
+
+    gr.Markdown(f"### 📅 Weekly view — {VIEW_WEEK['label']}")
+    week_plot = gr.Plot(label="Weekly")
 
     with gr.Accordion("How the scoreboard is calculated", open=False):
         gr.Markdown(
@@ -396,11 +414,8 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
-    outputs = [hero_md, comparison_md, plot, scoreboard_md]
-    inputs = [cycle_dd, horizon_dd]
-    demo.load(refresh, inputs=inputs, outputs=outputs)
-    cycle_dd.change(refresh, inputs=inputs, outputs=outputs)
-    horizon_dd.change(refresh, inputs=inputs, outputs=outputs)
+    outputs = [hero_md, comparison_md, zoom_plot, week_plot, scoreboard_md]
+    demo.load(refresh, outputs=outputs)
 
 
 if __name__ == "__main__":
