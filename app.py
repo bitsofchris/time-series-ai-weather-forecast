@@ -429,6 +429,8 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     gr.Markdown(SUBTITLE)
 
     hero_md = gr.Markdown()
+    gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
+    week_plot = gr.Plot(label="Weekly")
     comparison_md = gr.Markdown()
     gr.HTML(
         # KOKX is the NWS radar site at Upton, NY — covers Long Island incl.
@@ -449,9 +451,6 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         "<span style='opacity:0.55'>🔄 Live data + forecast auto-refresh every 15 minutes.</span>"
     )
-
-    gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
-    week_plot = gr.Plot(label="Weekly")
 
     gr.Markdown("### 🏆 How has each model done so far?")
     scoreboard_md = gr.Markdown()

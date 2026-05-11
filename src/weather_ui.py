@@ -85,17 +85,16 @@ def hero_markdown(
     if cur_temp is None or when_ts is None:
         return "_(no current readings yet)_"
 
-    when = when_ts.tz_convert(tz).strftime("%-I:%M %p %Z on %a %b %-d")
+    eco_when = when_ts.tz_convert(tz).strftime("%-I:%M %p %Z, %a %b %-d")
 
     nws_temp_str = "—"
-    nws_short = ""
+    nws_when = "—"
     glyph = "🌡"
     gap_str = ""
-    nws_hour_label = "this hour"
     if nws_first is not None and not nws_first.empty:
         idx0 = nws_first.index[0] if isinstance(nws_first, pd.DataFrame) else nws_first.name
         if isinstance(idx0, pd.Timestamp):
-            nws_hour_label = idx0.tz_convert(tz).strftime("%-I %p %Z")
+            nws_when = idx0.tz_convert(tz).strftime("%-I %p %Z, %a %b %-d")
         row = nws_first.iloc[0] if isinstance(nws_first, pd.DataFrame) else nws_first
         if isinstance(row, pd.Series):
             if "temp_f" in row and pd.notna(row["temp_f"]):
@@ -104,20 +103,15 @@ def hero_markdown(
                 sign = "+" if gap >= 0 else ""
                 gap_str = f" <span style='opacity:0.55'>(NWS off by {sign}{gap:.1f}°F)</span>"
             if "short_forecast" in row:
-                nws_short = str(row["short_forecast"])
-                glyph = emoji_for(nws_short)
+                glyph = emoji_for(str(row["short_forecast"]))
 
     table = (
-        "| Source | Temperature |\n"
-        "|---|---|\n"
-        f"| 📡 Ecowitt (measured) | **{cur_temp:.1f}°F** |\n"
-        f"| 🌎 NWS forecast for {nws_hour_label} | {nws_temp_str}{gap_str} |"
+        "| Source | Temperature | When |\n"
+        "|---|---|---|\n"
+        f"| 📡 Ecowitt (measured) | **{cur_temp:.1f}°F** | {eco_when} |\n"
+        f"| 🌎 NWS forecast | {nws_temp_str}{gap_str} | {nws_when} |"
     )
-    return (
-        f"### {glyph} {place}\n\n"
-        f"{table}\n\n"
-        f"<span style='opacity:0.55'>Last Ecowitt reading at {when}</span>"
-    )
+    return f"### {glyph} {place}\n\n{table}"
 
 
 def aligned_comparison_markdown(
