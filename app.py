@@ -35,12 +35,18 @@ PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 # The archive is kept current by the autorefresh thread + the per-Space-tick
 # sync, so over time we accumulate true 5-min granularity beyond Ecowitt's
 # own 24-30h 5-min retention window.
+#
+# context_days = how much past data we feed Toto. display_days = how much
+# we show on the chart. Feeding the model a longer context than we display
+# keeps the forecast informed by the full week without making the chart
+# noisy.
 VIEW_WEEK = {
-    "label": "Past 7 days · 72 h forecast (5-min cadence)",
+    "label": "Past 5 days · 48 h forecast (5-min cadence, Toto sees 7d)",
     "cycle_type": "5min",
     "resample": "5min",
-    "history_days": 7,
-    "horizon_hours": 72,
+    "display_days": 5,
+    "context_days": 7,
+    "horizon_hours": 48,
 }
 
 METRICS = [
@@ -175,9 +181,21 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     step_hours = _resample_hours(resample)
     horizon_hours = view["horizon_hours"]
     horizon_steps = max(1, int(round(horizon_hours / step_hours)))
-    hours = view["history_hours"] if "history_hours" in view else view["history_days"] * 24
 
-    history = fetch_history(cycle_type, resample, hours)
+    # context_hours = what we feed Toto; display_hours = what we show on
+    # the chart. Fall back to old keys for backward compatibility.
+    context_hours = view.get(
+        "context_hours",
+        view.get("context_days", view.get("history_days", 0)) * 24
+        or view.get("history_hours", 0),
+    )
+    display_hours = view.get(
+        "display_hours",
+        view.get("display_days", view.get("history_days", 0)) * 24
+        or view.get("history_hours", 0),
+    )
+
+    history = fetch_history(cycle_type, resample, context_hours)
     nws_df_raw = fetch_nws(horizon_hours)
     nws_df = _resample_nws_to(nws_df_raw, resample)
     last_actual = history.dropna(how="all").index.max()
@@ -203,7 +221,7 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
                 forecast_log.record_nws(log_conn, m["col"], ns)
 
     now = pd.Timestamp.now(tz="UTC").floor(resample)
-    visible_steps = int(round(hours / step_hours))
+    visible_steps = int(round(display_hours / step_hours))
     visible_history = history.tail(visible_steps)
 
     # Past Toto forecasts: for each past hour visible on the chart, the
