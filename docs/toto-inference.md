@@ -25,7 +25,7 @@ weakest model in the Toto-2.0 family doing something useful zero-shot; the
 | Source | Ecowitt Cloud API v3 (`/device/history`) |
 | Station | Ecowitt GW3000B, Westhampton Beach NY |
 | Channels forecasted | `outdoor.temperature` (°F), `outdoor.humidity` (%), `pressure.relative` (inHg), `rainfall_piezo.rain_rate` (in/hr) |
-| Native upload cadence | 30 min (the device uploads to Ecowitt's cloud every half hour) |
+| Native storage cadence | **5 min** at `cycle_type=5min` (the device is configured to upload at ~1-min intervals; Ecowitt buckets to 5 min for the 90-day tier). Earlier defaults of 30 min were the device's out-of-box upload schedule. |
 | `cycle_type` requested | depends on the **Display cadence** dropdown — `30min` (default, resampled to 1 h or 30 min) or `4hour` |
 | History window pulled | 7 days for `30min` cycle, 30 days for `4hour` cycle |
 | Resampling | pandas `df.resample(R).mean()` where R matches the dropdown (`1h` / `30min` / `4h`) |

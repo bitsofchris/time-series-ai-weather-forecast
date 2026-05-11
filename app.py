@@ -32,9 +32,9 @@ PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
 # Two fixed views — no more dropdowns.
 VIEW_ZOOM = {
-    "label": "Last 36 h · 12 h forecast (30-min cadence)",
-    "cycle_type": "30min",
-    "resample": "30min",
+    "label": "Last 36 h · 12 h forecast (5-min cadence)",
+    "cycle_type": "5min",
+    "resample": "5min",
     "history_hours": 36,
     "horizon_hours": 12,
 }
