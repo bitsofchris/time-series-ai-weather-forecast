@@ -30,18 +30,7 @@ CACHE_TTL_SECONDS = AUTO_REFRESH_SECONDS - 60  # so autorefresh always refetches
 DISPLAY_TZ = os.environ.get("DISPLAY_TZ", "America/New_York")
 PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
-# Two fixed views — no more dropdowns.
-VIEW_ZOOM = {
-    # 24h history is the longest window where Ecowitt reliably keeps 5-min
-    # data; beyond ~30h the cloud has already downsampled to 30-min and the
-    # zoom view stops being zoomed. 8h forecast keeps the chart ~75% history,
-    # ~25% future.
-    "label": "Last 24 h · 8 h forecast (5-min cadence)",
-    "cycle_type": "5min",
-    "resample": "5min",
-    "history_hours": 24,
-    "horizon_hours": 8,
-}
+# Single canonical view — weekly, hourly cadence.
 VIEW_WEEK = {
     "label": "Past 7 days · 72 h forecast (hourly cadence)",
     "cycle_type": "30min",
@@ -190,15 +179,6 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     now = pd.Timestamp.now(tz="UTC").floor(resample)
     visible_steps = int(round(hours / step_hours))
     visible_history = history.tail(visible_steps)
-    since_unix = (
-        int(visible_history.index.min().timestamp()) if not visible_history.empty else None
-    )
-    past_toto: dict[str, pd.DataFrame] = {}
-    for m in METRICS:
-        col = m["col"]
-        pt = forecast_log.historical_predictions(log_conn, "toto", col, since_unix=since_unix)
-        if not pt.empty:
-            past_toto[col] = pt
 
     fig = combined_figure(
         history=visible_history,
@@ -206,7 +186,6 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
         nws_df=nws_future,
         metrics=METRICS,
         now=now,
-        past_toto=past_toto,
     )
     return {
         "fig": fig,
@@ -221,10 +200,7 @@ def refresh():
     realtime = fetch_realtime_snapshot()
     log_conn = forecast_log.connect()
 
-    # Weekly view is the canonical one logged to the scoreboard (hourly
-    # cadence keeps target_ts aligned with NWS hourly periods).
     week = _build_view(VIEW_WEEK, log_conn, log_to_scoreboard=True)
-    zoom = _build_view(VIEW_ZOOM, log_conn, log_to_scoreboard=False)
 
     # Hero uses the weekly history + the NWS period containing "now".
     nws_df_raw = week["nws_df_raw"]
@@ -250,7 +226,7 @@ def refresh():
     scoreboard = render_scoreboard(log_conn)
 
     persist.push_db_async()
-    return hero, comparison_md, zoom["fig"], week["fig"], scoreboard
+    return hero, comparison_md, week["fig"], scoreboard
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -370,10 +346,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
 
     scoreboard_md = gr.Markdown()
 
-    gr.Markdown(f"### 🔍 Zoomed-in view — {VIEW_ZOOM['label']}")
-    zoom_plot = gr.Plot(label="Zoomed-in")
-
-    gr.Markdown(f"### 📅 Weekly view — {VIEW_WEEK['label']}")
+    gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
     week_plot = gr.Plot(label="Weekly")
 
     with gr.Accordion("How the scoreboard is calculated", open=False):
@@ -418,7 +391,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
-    outputs = [hero_md, comparison_md, zoom_plot, week_plot, scoreboard_md]
+    outputs = [hero_md, comparison_md, week_plot, scoreboard_md]
     demo.load(refresh, outputs=outputs)
 
 
