@@ -194,15 +194,11 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
         int(visible_history.index.min().timestamp()) if not visible_history.empty else None
     )
     past_toto: dict[str, pd.DataFrame] = {}
-    past_nws: dict[str, pd.DataFrame] = {}
     for m in METRICS:
         col = m["col"]
         pt = forecast_log.historical_predictions(log_conn, "toto", col, since_unix=since_unix)
         if not pt.empty:
             past_toto[col] = pt
-        pn = forecast_log.historical_predictions(log_conn, "nws", col, since_unix=since_unix)
-        if not pn.empty:
-            past_nws[col] = pn
 
     fig = combined_figure(
         history=visible_history,
@@ -211,7 +207,6 @@ def refresh(cycle_label: str = "Hourly", horizon_label: str = "24 h"):
         metrics=METRICS,
         now=now,
         past_toto=past_toto,
-        past_nws=past_nws,
     )
 
     hero = hero_markdown(PLACE_NAME, history, nws_first, DISPLAY_TZ, realtime=realtime)

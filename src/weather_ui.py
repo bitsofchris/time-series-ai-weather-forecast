@@ -226,18 +226,6 @@ def combined_figure(
                 ),
                 row=i, col=1,
             )
-        # Past NWS forecasts vs the same hours' actuals.
-        if past_nws and col in past_nws:
-            pn = past_nws[col]
-            fig.add_trace(
-                go.Scatter(
-                    x=pn.index, y=pn["p50"].values,
-                    name="🌎 NWS (past forecasts)", mode="lines",
-                    line=dict(color="rgba(214,39,40,0.55)", width=1.5, dash="dash"),
-                    showlegend=showlegend, legendgroup="nws-past",
-                ),
-                row=i, col=1,
-            )
         if toto is not None:
             fig.add_trace(
                 go.Scatter(
