@@ -270,7 +270,7 @@ def refresh():
     hero = hero_markdown(PLACE_NAME, week["history"], nws_first, DISPLAY_TZ, realtime=realtime)
     if "temp_f" in week["totos"]:
         comparison_md = (
-            "### 🆚 24-hour temperature forecast — same hour, side-by-side\n\n"
+            "### 🆚 Toto vs NWS — same hour, side-by-side\n\n"
             + aligned_comparison_markdown(
                 toto=week["totos"]["temp_f"],
                 nws_temp=week["nws_aligned"].get("temp_f"),

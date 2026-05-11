@@ -118,18 +118,14 @@ def aligned_comparison_markdown(
     toto: TotoForecast,
     nws_temp: pd.Series | None,
     tz: str,
-    step_hours: int = 3,
-    max_offset_hours: int = 24,
+    offsets_hours: tuple[int, ...] = (1, 3, 12),
 ) -> str:
-    """Future forecast table — same wall-clock hour for both models.
-
-    Starts at the first forecast hour (i.e. the next hour after the most
-    recent Ecowitt reading) and steps forward in `step_hours` increments.
-    """
+    """Future forecast table — same wall-clock hour for both models, at
+    the same lookaheads we score on the scoreboard (1h / 3h / 12h)."""
     if toto is None or toto.median.empty:
         return ""
-    base = toto.median.index[0]  # first forecast hour
-    base_day = base.tz_convert(tz).strftime("%a")
+    now_utc = pd.Timestamp.now(tz="UTC")
+    base_day = now_utc.tz_convert(tz).strftime("%a")
 
     def _nearest(series: pd.Series | None, target: pd.Timestamp):
         if series is None or series.empty:
@@ -139,18 +135,18 @@ def aligned_comparison_markdown(
             return None, None
         return series.index[idx], float(series.iloc[idx])
 
-    rows = ["| When | 🤖 Toto | 🌎 NWS | Δ |", "|---|---|---|---|"]
-    for h in range(0, max_offset_hours + 1, step_hours):
-        target = base + pd.Timedelta(hours=h)
+    rows = ["| Lookahead | When | 🤖 Toto | 🌎 NWS | Δ |", "|---|---|---|---|---|"]
+    for h in offsets_hours:
+        target = now_utc + pd.Timedelta(hours=h)
         t_idx, t_val = _nearest(toto.median, target)
         n_idx, n_val = _nearest(nws_temp, target)
         if t_val is None and n_val is None:
             continue
         local = (t_idx or n_idx).tz_convert(tz)
         if local.strftime("%a") == base_day:
-            label = local.strftime("%-I %p")
+            when_label = local.strftime("%-I %p")
         else:
-            label = local.strftime("%a %-I %p")
+            when_label = local.strftime("%a %-I %p")
         toto_str = f"**{t_val:.0f}°F**" if t_val is not None else "—"
         nws_str = f"**{n_val:.0f}°F**" if n_val is not None else "—"
         if t_val is not None and n_val is not None:
@@ -159,7 +155,7 @@ def aligned_comparison_markdown(
             delta_str = f"{sign}{d:.1f}°F"
         else:
             delta_str = "—"
-        rows.append(f"| {label} | {toto_str} | {nws_str} | {delta_str} |")
+        rows.append(f"| **{h} h** | {when_label} | {toto_str} | {nws_str} | {delta_str} |")
     return "\n".join(rows)
 
 
