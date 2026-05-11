@@ -30,11 +30,15 @@ CACHE_TTL_SECONDS = AUTO_REFRESH_SECONDS - 60  # so autorefresh always refetches
 DISPLAY_TZ = os.environ.get("DISPLAY_TZ", "America/New_York")
 PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
-# Single canonical view — weekly, hourly cadence.
+# Single canonical view. History is read from the local SQLite archive
+# (data/ecowitt.db) instead of hitting the Ecowitt API on every page load.
+# The archive is kept current by the autorefresh thread + the per-Space-tick
+# sync, so over time we accumulate true 5-min granularity beyond Ecowitt's
+# own 24-30h 5-min retention window.
 VIEW_WEEK = {
-    "label": "Past 7 days · 72 h forecast (hourly cadence)",
-    "cycle_type": "30min",
-    "resample": "1h",
+    "label": "Past 7 days · 72 h forecast (5-min cadence)",
+    "cycle_type": "5min",
+    "resample": "5min",
     "history_days": 7,
     "horizon_hours": 72,
 }
@@ -67,8 +71,30 @@ def cached(ttl: int):
 
 
 # --- data fetchers --------------------------------------------------------
-@cached(CACHE_TTL_SECONDS)
+ECOWITT_ARCHIVE_DB_PATH = "data/ecowitt.db"
+
+
 def fetch_history(cycle_type: str, resample: str, hours: float) -> pd.DataFrame:
+    """Read history from the local SQLite archive. If the archive is empty
+    (cold start before the first sync), fall back to a one-shot API pull so
+    the page still renders something."""
+    now_unix = int(time.time())
+    since_unix = now_unix - int(hours * 3600)
+
+    conn = storage.connect(ECOWITT_ARCHIVE_DB_PATH)
+    try:
+        df = storage.read_history_dataframe(
+            conn, since_unix=since_unix, until_unix=now_unix,
+            cycle_type=cycle_type, resample=resample,
+        )
+    finally:
+        conn.close()
+
+    if not df.empty:
+        return df
+
+    # Cold-start fallback: pull a small slice directly from the API so the
+    # page isn't blank on the very first visit before sync has run.
     cfg = ecowitt.EcowittConfig.from_env()
     end = datetime.now(timezone.utc).replace(tzinfo=None)
     start = end - timedelta(hours=hours)
@@ -282,7 +308,7 @@ def render_scoreboard(conn) -> str:
 
 
 # --- auto-refresh background thread --------------------------------------
-ECOWITT_ARCHIVE_DB = "data/ecowitt.db"
+ECOWITT_ARCHIVE_DB = ECOWITT_ARCHIVE_DB_PATH  # alias
 
 
 def _sync_archive_all_cycles() -> None:
@@ -307,12 +333,30 @@ def _sync_archive_all_cycles() -> None:
         conn.close()
 
 
+def _sync_5min_only() -> None:
+    """Quick sync of just the 5-min cycle (the one the display reads from).
+    Called on startup so the first visitor sees fresh data."""
+    try:
+        cfg = ecowitt.EcowittConfig.from_env()
+    except RuntimeError:
+        return
+    conn = storage.connect(ECOWITT_ARCHIVE_DB)
+    try:
+        cycle = next(c for c in sync.CYCLES if c.name == "5min")
+        sync.sync_cycle(cfg, conn, cycle, verbose=False)
+    except Exception:  # noqa: BLE001
+        print("[startup] 5-min sync error:")
+        traceback.print_exc()
+    finally:
+        conn.close()
+
+
 def _autorefresh_loop():
     while True:
         try:
-            refresh()                  # live forecast + forecasts.db log
-            _sync_archive_all_cycles() # 5min/30min/4hour raw archive
-            persist.push_all_async()   # back up both DBs to HF Dataset
+            _sync_archive_all_cycles()  # bring the local archive up to date first
+            refresh()                    # read fresh data from DB, write forecast log
+            persist.push_all_async()     # ship both DBs to the HF Dataset
         except Exception:  # noqa: BLE001
             print("[autorefresh] error during refresh:")
             traceback.print_exc()
@@ -415,6 +459,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
 
 
 if __name__ == "__main__":
-    persist.pull_all()  # bootstrap forecast log + archive from the HF Dataset
+    persist.pull_all()       # bootstrap forecast log + archive from the HF Dataset
+    _sync_5min_only()        # ensure the archive has fresh 5-min data before first paint
     _start_autorefresh()
     demo.launch()

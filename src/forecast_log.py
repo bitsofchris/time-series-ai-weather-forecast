@@ -61,13 +61,24 @@ def _ts(t) -> int:
     return int(pd.Timestamp(t).tz_convert("UTC").timestamp())
 
 
-def record_actuals(conn: sqlite3.Connection, history: pd.DataFrame) -> int:
-    """Upsert actuals from a history DataFrame (UTC-indexed; column = metric)."""
+def record_actuals(
+    conn: sqlite3.Connection,
+    history: pd.DataFrame,
+    only_hourly: bool = True,
+) -> int:
+    """Upsert actuals from a history DataFrame (UTC-indexed; column = metric).
+
+    By default only hourly-aligned target_ts are stored so the scoreboard
+    table stays small even when the source history is at 5-min cadence.
+    """
     rows = []
     for metric in history.columns:
         s = history[metric].dropna()
         for ts, val in s.items():
-            rows.append((_ts(ts), metric, float(val)))
+            tsu = _ts(ts)
+            if only_hourly and tsu % 3600 != 0:
+                continue
+            rows.append((tsu, metric, float(val)))
     if not rows:
         return 0
     conn.executemany(
@@ -83,12 +94,26 @@ def record_toto(
     metric: str,
     fcst: TotoForecast,
     forecast_made_at: int | None = None,
+    only_hourly: bool = True,
 ) -> int:
+    """Persist a Toto forecast.
+
+    `only_hourly`: when True (default), only the hourly-aligned target_ts
+    rows are written. Forecast inference may run at 5-min cadence, but the
+    scoreboard score is the same regardless of cadence and the log grows
+    linearly per refresh — hourly keeps it manageable.
+    """
     made = forecast_made_at if forecast_made_at is not None else int(time.time())
-    rows = [
-        (made, _ts(t), "toto", metric, float(p10), float(p50), float(p90))
-        for t, p10, p50, p90 in zip(fcst.median.index, fcst.p10.values, fcst.median.values, fcst.p90.values)
-    ]
+    rows = []
+    for t, p10, p50, p90 in zip(
+        fcst.median.index, fcst.p10.values, fcst.median.values, fcst.p90.values
+    ):
+        tsu = _ts(t)
+        if only_hourly and tsu % 3600 != 0:
+            continue
+        rows.append((made, tsu, "toto", metric, float(p10), float(p50), float(p90)))
+    if not rows:
+        return 0
     conn.executemany(
         "INSERT OR REPLACE INTO forecast_snapshots "
         "(forecast_made_at, target_ts, source, metric, p10, p50, p90) "

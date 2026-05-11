@@ -107,6 +107,55 @@ def max_ts(conn: sqlite3.Connection, cycle_type: str) -> int | None:
     return row[0] if row and row[0] is not None else None
 
 
+def read_history_dataframe(
+    conn: sqlite3.Connection,
+    since_unix: int,
+    until_unix: int | None = None,
+    cycle_type: str = "5min",
+    fields: dict[str, tuple[str, str]] | None = None,
+    resample: str | None = None,
+):
+    """Read a multi-metric history slice from the local archive.
+
+    Returns a UTC-indexed pandas DataFrame whose columns are the keys of
+    `fields` (default: ecowitt.HISTORY_FIELDS) — temp_f, humidity,
+    pressure_inhg, rain_in_hr. Each column is pulled from the readings
+    table at the requested `cycle_type`; optionally resampled to a uniform
+    cadence with `.mean()`.
+    """
+    import time as _time
+    import pandas as pd  # local import keeps storage importable without pandas
+
+    if fields is None:
+        from . import ecowitt
+        fields = ecowitt.HISTORY_FIELDS
+    if until_unix is None:
+        until_unix = int(_time.time())
+
+    series_dict: dict[str, pd.Series] = {}
+    for col, (channel, metric) in fields.items():
+        rows = conn.execute(
+            "SELECT ts_unix, value FROM readings"
+            " WHERE cycle_type=? AND channel=? AND metric=?"
+            "   AND ts_unix BETWEEN ? AND ?"
+            " ORDER BY ts_unix",
+            (cycle_type, channel, metric, since_unix, until_unix),
+        ).fetchall()
+        if not rows:
+            continue
+        idx = pd.to_datetime([r[0] for r in rows], unit="s", utc=True)
+        vals = pd.to_numeric([r[1] for r in rows], errors="coerce")
+        series_dict[col] = pd.Series(vals, index=idx, name=col).sort_index()
+
+    if not series_dict:
+        return pd.DataFrame()
+    df = pd.concat(series_dict.values(), axis=1)
+    df.columns = list(series_dict.keys())
+    if resample:
+        df = df.resample(resample).mean()
+    return df
+
+
 def stats(conn: sqlite3.Connection) -> list[tuple]:
     return conn.execute(
         "SELECT cycle_type, COUNT(*), MIN(ts_unix), MAX(ts_unix),"
