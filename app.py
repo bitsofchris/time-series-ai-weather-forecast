@@ -41,9 +41,10 @@ PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 # keeps the forecast informed by the full week without making the chart
 # noisy.
 VIEW_WEEK = {
-    "label": "Past 5 days · 48 h forecast (5-min cadence, Toto sees 7d)",
+    "label": "Past 5 days · 48 h forecast (5-min display, Toto fed hourly)",
     "cycle_type": "5min",
-    "resample": "5min",
+    "resample": "5min",            # display cadence on the chart
+    "forecast_resample": "1h",     # cadence Toto actually consumes
     "display_days": 5,
     "context_days": 7,
     "horizon_hours": 48,
@@ -177,10 +178,13 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     """Fetch + forecast for one view config. Returns intermediate pieces so
     the caller can stitch the page together."""
     cycle_type = view["cycle_type"]
-    resample = view["resample"]
-    step_hours = _resample_hours(resample)
+    display_resample = view["resample"]
+    forecast_resample = view.get("forecast_resample", display_resample)
+
+    display_step_hours = _resample_hours(display_resample)
+    forecast_step_hours = _resample_hours(forecast_resample)
     horizon_hours = view["horizon_hours"]
-    horizon_steps = max(1, int(round(horizon_hours / step_hours)))
+    horizon_steps = max(1, int(round(horizon_hours / forecast_step_hours)))
 
     # context_hours = what we feed Toto; display_hours = what we show on
     # the chart. Fall back to old keys for backward compatibility.
@@ -195,7 +199,14 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
         or view.get("history_hours", 0),
     )
 
-    history = fetch_history(cycle_type, resample, context_hours)
+    history = fetch_history(cycle_type, display_resample, context_hours)
+    # Coarser series for Toto inference: keeps the input length and
+    # forecast horizon short enough for the 4M model to predict cleanly,
+    # while the chart still shows the full 5-min granularity.
+    if forecast_resample != display_resample:
+        history_for_toto = history.resample(forecast_resample).mean()
+    else:
+        history_for_toto = history
     nws_df_raw = fetch_nws(horizon_hours)
     nws_df = _resample_nws_to(nws_df_raw, resample)
     last_actual = history.dropna(how="all").index.max()
@@ -207,7 +218,7 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
     totos: dict[str, object] = {}
     nws_aligned: dict[str, pd.Series] = {}
     for m in METRICS:
-        series = history[m["col"]].dropna()
+        series = history_for_toto[m["col"]].dropna()
         if series.empty:
             continue
         toto = forecast_series(series, horizon=horizon_steps)
@@ -220,27 +231,9 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
             if log_to_scoreboard:
                 forecast_log.record_nws(log_conn, m["col"], ns)
 
-    now = pd.Timestamp.now(tz="UTC").floor(resample)
-    visible_steps = int(round(display_hours / step_hours))
+    now = pd.Timestamp.now(tz="UTC").floor(display_resample)
+    visible_steps = int(round(display_hours / display_step_hours))
     visible_history = history.tail(visible_steps)
-
-    # Past Toto forecasts: for each past hour visible on the chart, the
-    # most-recent forecast we issued *before* that hour. Strictly capped at
-    # the most recent Ecowitt actual so the overlay never bleeds into the
-    # future portion of the chart.
-    since_unix = (
-        int(visible_history.index.min().timestamp()) if not visible_history.empty else None
-    )
-    until_unix = int(last_actual.timestamp()) if last_actual is not None else None
-    past_toto: dict[str, pd.DataFrame] = {}
-    for m in METRICS:
-        col = m["col"]
-        pt = forecast_log.historical_predictions(
-            log_conn, "toto", col,
-            since_unix=since_unix, until_unix=until_unix,
-        )
-        if not pt.empty:
-            past_toto[col] = pt
 
     fig = combined_figure(
         history=visible_history,
@@ -248,7 +241,6 @@ def _build_view(view: dict, log_conn, log_to_scoreboard: bool) -> dict:
         nws_df=nws_future,
         metrics=METRICS,
         now=now,
-        past_toto=past_toto,
     )
     return {
         "fig": fig,

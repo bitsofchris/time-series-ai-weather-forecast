@@ -187,7 +187,6 @@ def combined_figure(
     nws_df: pd.DataFrame | None,
     metrics: list[dict],
     now: pd.Timestamp | None = None,
-    past_toto: dict[str, pd.DataFrame] | None = None,
 ) -> go.Figure:
     """Three stacked subplots sharing the x-axis."""
     fig = make_subplots(
@@ -213,21 +212,6 @@ def combined_figure(
             ),
             row=i, col=1,
         )
-        # Past Toto forecasts overlaid on actuals (historical side only).
-        # Each point is Toto's prediction issued at a fixed lag before its
-        # target hour (default 6h-ahead) — so the line shows model error at
-        # a consistent forecast horizon, not a mix of lags.
-        if past_toto and col in past_toto:
-            pt = past_toto[col]
-            fig.add_trace(
-                go.Scatter(
-                    x=pt.index, y=pt["p50"].values,
-                    name="🤖 Toto (6h-ahead, past)", mode="lines",
-                    line=dict(color="rgba(31,119,180,0.55)", width=1.5),
-                    showlegend=showlegend, legendgroup="toto-past",
-                ),
-                row=i, col=1,
-            )
         if toto is not None:
             fig.add_trace(
                 go.Scatter(
