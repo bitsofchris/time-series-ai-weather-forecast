@@ -32,11 +32,15 @@ PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 
 # Two fixed views — no more dropdowns.
 VIEW_ZOOM = {
-    "label": "Last 36 h · 12 h forecast (5-min cadence)",
+    # 24h history is the longest window where Ecowitt reliably keeps 5-min
+    # data; beyond ~30h the cloud has already downsampled to 30-min and the
+    # zoom view stops being zoomed. 8h forecast keeps the chart ~75% history,
+    # ~25% future.
+    "label": "Last 24 h · 8 h forecast (5-min cadence)",
     "cycle_type": "5min",
     "resample": "5min",
-    "history_hours": 36,
-    "horizon_hours": 12,
+    "history_hours": 24,
+    "horizon_hours": 8,
 }
 VIEW_WEEK = {
     "label": "Past 7 days · 72 h forecast (hourly cadence)",
