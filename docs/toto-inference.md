@@ -7,16 +7,17 @@ post / footnote can quote it accurately.
 
 | | |
 |---|---|
-| Model ID | `Datadog/Toto-2.0-4m` |
-| Parameters | ~4 M |
-| Source | https://huggingface.co/Datadog/Toto-2.0-4m |
+| Model ID | `Datadog/Toto-2.0-22m` |
+| Parameters | ~22 M |
+| Source | https://huggingface.co/Datadog/Toto-2.0-22m |
 | Loaded via | `Toto2Model.from_pretrained(...)` (the `toto-2` package from DataDog/toto's `toto2/` subdir, pinned in `requirements.txt`) |
 | Hardware | CPU (HF Space free tier — no GPU) |
-| Patch size | `model.config.patch_size = 32` (constraint: context length must be a multiple of 32 or padded to one) |
+| Patch size | `model.config.patch_size` (read at runtime; the context-length truncate/pad logic adapts automatically if the value differs across variants) |
 
-We picked the smallest variant intentionally so the post can show the
-weakest model in the Toto-2.0 family doing something useful zero-shot; the
-22 M / 313 M / 1 B variants would tighten the confidence band considerably.
+We started on the 4 M variant for the demo's "weakest model still says
+something useful" angle, then bumped to 22 M for visibly tighter
+confidence bands and lower scoreboard MAE — still small enough to run
+in sub-second CPU latency on the free HF Space tier.
 
 ## Input data
 

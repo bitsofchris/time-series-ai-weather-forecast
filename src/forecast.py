@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-DEFAULT_MODEL_ID = "Datadog/Toto-2.0-4m"
+DEFAULT_MODEL_ID = "Datadog/Toto-2.0-22m"
 
 # Index into the 9-quantile output.
 Q10_IDX = 0

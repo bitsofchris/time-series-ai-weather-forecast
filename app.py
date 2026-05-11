@@ -441,7 +441,7 @@ HOOK = (
 )
 SUBTITLE = (
     "Live readings from my Ecowitt GW3000B + a probabilistic forecast from "
-    "[Datadog's Toto 2.0 (4M)](https://huggingface.co/Datadog/Toto-2.0-4m), "
+    "[Datadog's Toto 2.0 (22M)](https://huggingface.co/Datadog/Toto-2.0-22m), "
     "compared against the [NWS hourly forecast](https://www.weather.gov/documentation/services-web-api). "
     "The scoreboard tracks who's been more accurate over the past 48 hours."
 )
@@ -501,8 +501,8 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
 
     with gr.Accordion("How the forecast is made", open=False):
         gr.Markdown(
-            "**Model.** [Datadog/Toto-2.0-4m](https://huggingface.co/Datadog/Toto-2.0-4m) "
-            "(~4 M params, CPU). Smallest variant of Toto 2.0; the larger ones would tighten the band.\n\n"
+            "**Model.** [Datadog/Toto-2.0-22m](https://huggingface.co/Datadog/Toto-2.0-22m) "
+            "(~22 M params, CPU). Second-smallest variant of Toto 2.0; the larger ones (313 M / 1 B / 2.5 B) would tighten the band further.\n\n"
             "**Input.** For each metric we feed Toto a univariate window of the most recent "
             "Ecowitt history at the chosen display cadence (default 1 h spacing). "
             "Toto requires the context length to be a multiple of its `patch_size=32`, so we "
