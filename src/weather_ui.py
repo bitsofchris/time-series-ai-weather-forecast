@@ -93,7 +93,9 @@ def hero_markdown(
         if isinstance(row, pd.Series) and "short_forecast" in row:
             glyph = emoji_for(str(row["short_forecast"]))
 
-    target = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=horizon_hours)
+    # 'Next round hour' — if it's 3:55, target = 4 PM. If it's 4:01,
+    # target = 5 PM. Matches what people intuit by 'in the next hour'.
+    target = pd.Timestamp.now(tz="UTC").ceil("h")
 
     def _nearest(series, target_ts):
         if series is None or series.empty:
@@ -115,8 +117,8 @@ def hero_markdown(
         "| Source | Temperature | When |\n"
         "|---|---|---|\n"
         f"| 📡 Ecowitt (now) | **{cur_temp:.1f}°F** | {eco_when} |\n"
-        f"{_row(f'🤖 Toto ({horizon_hours} h-ahead)', toto_val, toto_idx)}\n"
-        f"{_row(f'🌎 NWS ({horizon_hours} h-ahead)', nws_val, nws_idx)}"
+        f"{_row('🤖 Toto (next hour)', toto_val, toto_idx)}\n"
+        f"{_row('🌎 NWS (next hour)', nws_val, nws_idx)}"
     )
     return f"### {glyph} {place}\n\n{table}"
 
@@ -176,6 +178,57 @@ def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:
     temps = " | ".join(f"{t:.0f}°" for t in df["temp_f"])
     sep = "|---" * len(df) + "|"
     return f"| {hours} |\n{sep}\n| {glyphs} |\n| {temps} |"
+
+
+def hero_gauges(
+    cur_temp: float,
+    toto_next: float | None,
+    nws_next: float | None,
+    temp_range: tuple[float, float] = (20.0, 100.0),
+) -> go.Figure:
+    """Three side-by-side gauges: current Ecowitt temperature, plus each
+    model's prediction for the next round hour. Each forecast gauge also
+    shows its delta vs the current reading."""
+    cool_to_warm = [
+        {"range": [20, 40], "color": "rgba(31,119,180,0.18)"},
+        {"range": [40, 60], "color": "rgba(31,119,180,0.08)"},
+        {"range": [60, 80], "color": "rgba(214,39,40,0.08)"},
+        {"range": [80, 100], "color": "rgba(214,39,40,0.18)"},
+    ]
+    specs = [[{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}]]
+    fig = make_subplots(rows=1, cols=3, specs=specs)
+
+    def _ind(value, title, bar_color, with_delta: bool):
+        ind = go.Indicator(
+            mode="gauge+number+delta" if with_delta else "gauge+number",
+            value=value if value is not None else float("nan"),
+            title={"text": title, "font": {"size": 14}},
+            number={"suffix": " °F", "font": {"size": 30}},
+            gauge=dict(
+                axis=dict(range=list(temp_range), tickwidth=1, tickcolor="#888"),
+                bar=dict(color=bar_color, thickness=0.25),
+                bgcolor="white",
+                borderwidth=1,
+                bordercolor="#e0e0e0",
+                steps=cool_to_warm,
+                threshold=dict(line=dict(color=bar_color, width=4), value=value or 0),
+            ),
+            delta=(
+                dict(reference=cur_temp, suffix=" °F", increasing={"color": "#d62728"}, decreasing={"color": "#1f77b4"})
+                if with_delta else None
+            ),
+        )
+        return ind
+
+    fig.add_trace(_ind(cur_temp, "📡 Ecowitt (now)", "#222", False), row=1, col=1)
+    fig.add_trace(_ind(toto_next, "🤖 Toto (next hour)", "#1f77b4", True), row=1, col=2)
+    fig.add_trace(_ind(nws_next, "🌎 NWS (next hour)", "#d62728", True), row=1, col=3)
+    fig.update_layout(
+        height=260,
+        margin=dict(l=10, r=10, t=50, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
 
 
 def residual_figure(

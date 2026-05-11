@@ -22,6 +22,7 @@ from src.forecast import forecast_series
 from src.weather_ui import (
     aligned_comparison_markdown,
     combined_figure,
+    hero_gauges,
     hero_markdown,
     residual_figure,
 )
@@ -274,6 +275,30 @@ def refresh():
         nws_temp=week["nws_aligned"].get("temp_f"),
         horizon_hours=1,
     )
+
+    # Gauge trio above the hero table: current Ecowitt + each model's
+    # next-round-hour prediction.
+    cur_temp_for_gauge = (
+        float(realtime["temp_f"]) if realtime and realtime.get("temp_f") is not None
+        else float("nan")
+    )
+    next_hour_utc = pd.Timestamp.now(tz="UTC").ceil("h")
+
+    def _nearest_value(series, target):
+        if series is None or series.empty:
+            return None
+        idx = series.index.get_indexer([target], method="nearest")[0]
+        if idx < 0 or idx >= len(series):
+            return None
+        return float(series.iloc[idx])
+
+    toto_temp_fcst = week["totos"].get("temp_f")
+    toto_next = _nearest_value(
+        toto_temp_fcst.median if toto_temp_fcst is not None else None,
+        next_hour_utc,
+    )
+    nws_next = _nearest_value(week["nws_aligned"].get("temp_f"), next_hour_utc)
+    gauge_fig = hero_gauges(cur_temp_for_gauge, toto_next, nws_next)
     if "temp_f" in week["totos"]:
         comparison_md = (
             "### 🆚 Toto vs NWS — same hour, side-by-side\n\n"
@@ -293,7 +318,7 @@ def refresh():
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
-    return hero, comparison_md, week["fig"], scoreboard, resid_fig
+    return hero, gauge_fig, comparison_md, week["fig"], scoreboard, resid_fig
 
 
 # --- scoreboard ----------------------------------------------------------
@@ -435,6 +460,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
     gr.Markdown(SUBTITLE)
 
     hero_md = gr.Markdown()
+    gauge_plot = gr.Plot(label="Now vs next-hour forecasts", show_label=False)
     gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
     week_plot = gr.Plot(label="Weekly")
     comparison_md = gr.Markdown()
@@ -504,7 +530,7 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
-    outputs = [hero_md, comparison_md, week_plot, scoreboard_md, residual_plot]
+    outputs = [hero_md, gauge_plot, comparison_md, week_plot, scoreboard_md, residual_plot]
     demo.load(refresh, outputs=outputs)
 
 
