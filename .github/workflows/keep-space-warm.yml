@@ -1,0 +1,36 @@
+name: keep-space-warm
+
+# GitHub Actions cron that pings the HF Space every ~10 minutes so its
+# autorefresh thread keeps running (HF free tier sleeps a Space when no
+# external traffic hits it for a while; the daemon thread inside the Space
+# cannot keep it alive on its own).
+#
+# Notes:
+#   - GitHub cron has 5-min minimum granularity and can be delayed up to
+#     ~15 min during high load. */10 is a good middle ground.
+#   - Cron only runs on the default branch — push this file to the default
+#     branch of a GitHub repo (e.g. a mirror of this HF Space repo, or a
+#     dedicated tiny repo just for this workflow).
+#   - workflow_dispatch lets you trigger a one-off run from the Actions tab.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Wake up the Space
+        env:
+          URL: https://bitsofchris-time-series-ai-weather-forecast.hf.space/
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-delay 5 --max-time 60 \
+            "$URL" -o /dev/null \
+            -w "ping status=%{http_code} time=%{time_total}s url=%{url_effective}\n"
