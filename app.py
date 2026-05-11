@@ -281,9 +281,9 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Residual chart — pinned to 3 h-ahead (the middle row of the scoreboard
-    # table) so the picture matches one of the headline numbers.
-    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=3.0)
+    # Residual chart — 1 h-ahead, matching the first row of the scoreboard
+    # table so the picture corresponds to the easiest headline number.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=1.0)
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
@@ -292,10 +292,10 @@ def refresh():
 
 # --- scoreboard ----------------------------------------------------------
 SCOREBOARD_HORIZONS_H = [1, 3, 12]
+# Pressure has no NWS counterpart, so the head-to-head scoreboard skips it.
 SCOREBOARD_METRICS = [
     ("temp_f", "Temperature", "°F"),
     ("humidity", "Humidity", "%"),
-    ("pressure_inhg", "Pressure", "inHg"),
 ]
 
 
@@ -440,11 +440,12 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
         "<span style='opacity:0.55'>🔄 Live data + forecast auto-refresh every 15 minutes.</span>"
     )
 
-    scoreboard_md = gr.Markdown()
-    residual_plot = gr.Plot(label="Forecast residual")
-
     gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
     week_plot = gr.Plot(label="Weekly")
+
+    gr.Markdown("### 🏆 How has each model done so far?")
+    scoreboard_md = gr.Markdown()
+    residual_plot = gr.Plot(label="Forecast residual")
 
     with gr.Accordion("How the scoreboard is calculated", open=False):
         gr.Markdown(
