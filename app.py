@@ -437,9 +437,9 @@ HOOK = (
     "What if you could predict the future with the same technology?**"
 )
 SUBTITLE = (
-    "Live readings from my Ecowitt GW3000B + a probabilistic forecast from "
-    "[Datadog's Toto 2.0 (22M)](https://huggingface.co/Datadog/Toto-2.0-22m), "
-    "compared against the [NWS hourly forecast](https://www.weather.gov/documentation/services-web-api). "
+    "Live readings from my Ecowitt GW3000 gateway + WS90 7-in-1 sensor, plus a probabilistic forecast "
+    "from [Datadog's Toto 2.0 (22M)](https://huggingface.co/Datadog/Toto-2.0-22m), compared against "
+    "the [NWS hourly forecast](https://www.weather.gov/documentation/services-web-api). "
     "The scoreboard tracks who's been more accurate over the past 48 hours."
 )
 
@@ -514,6 +514,23 @@ with gr.Blocks(
     residual_plot = gr.Plot(label="Forecast residual")
 
     gr.Markdown("## 🔧 How it's made")
+    gr.Image(
+        "assets/ws90.jpeg",
+        show_label=False,
+        container=False,
+        interactive=False,
+        height=380,
+        show_download_button=False,
+        show_share_button=False,
+        show_fullscreen_button=False,
+    )
+    gr.Markdown(
+        "<div style='text-align:center;opacity:0.6;font-size:0.9em;"
+        "margin-top:-0.3em;margin-bottom:0.8em;'>"
+        "my ecowitt weather station — Ecowitt GW3000 gateway + WS90 7-in-1 sensor"
+        "</div>"
+    )
+
     with gr.Accordion("How the scoreboard is calculated", open=False):
         gr.Markdown(
             "We score each model on **how close its prediction was to the actual Ecowitt reading** "
