@@ -471,11 +471,7 @@ HEADER_CSS = """
 }
 """
 
-with gr.Blocks(
-    title="Toto Weather Forecast",
-    theme=gr.themes.Default(font=SYSTEM_FONT),
-    css=HEADER_CSS,
-) as demo:
+with gr.Blocks(title="Toto Weather Forecast") as demo:
     gr.Markdown("# Toto on my home weather station")
     gr.Markdown(HOOK)
     gr.Markdown(SUBTITLE)
@@ -520,9 +516,6 @@ with gr.Blocks(
         container=False,
         interactive=False,
         height=380,
-        show_download_button=False,
-        show_share_button=False,
-        show_fullscreen_button=False,
     )
     gr.Markdown(
         "<div style='text-align:center;opacity:0.6;font-size:0.9em;"
@@ -589,4 +582,4 @@ if __name__ == "__main__":
     persist.pull_all()       # bootstrap forecast log + archive from the HF Dataset
     _sync_5min_only()        # ensure the archive has fresh 5-min data before first paint
     _start_autorefresh()
-    demo.launch()
+    demo.launch(theme=gr.themes.Default(font=SYSTEM_FONT), css=HEADER_CSS)
