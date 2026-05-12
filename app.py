@@ -275,13 +275,10 @@ def refresh():
         horizon_hours=1,
     )
     if "temp_f" in week["totos"]:
-        comparison_md = (
-            "### 🆚 Toto vs NWS — same hour, side-by-side\n\n"
-            + aligned_comparison_markdown(
-                toto=week["totos"]["temp_f"],
-                nws_temp=week["nws_aligned"].get("temp_f"),
-                tz=DISPLAY_TZ,
-            )
+        comparison_md = aligned_comparison_markdown(
+            toto=week["totos"]["temp_f"],
+            nws_temp=week["nws_aligned"].get("temp_f"),
+            tz=DISPLAY_TZ,
         )
     else:
         comparison_md = ""
@@ -322,7 +319,7 @@ def render_scoreboard(conn) -> str:
     )
 
     lines = [
-        "### 📊 Forecast scoreboard (rolling 48 h MAE — lower is better)",
+        "### Rolling 48 h MAE — lower is better",
         (
             f"<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48 h window. "
             f"Scoreboard started {started_str}.</span>"
@@ -446,14 +443,51 @@ SUBTITLE = (
     "The scoreboard tracks who's been more accurate over the past 48 hours."
 )
 
-with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
+SYSTEM_FONT = [
+    gr.themes.GoogleFont("Inter"),
+    "system-ui", "-apple-system", "BlinkMacSystemFont",
+    "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif",
+]
+HEADER_CSS = """
+.gradio-container h1 { font-size: 2.2rem !important; line-height: 1.1; margin-bottom: 0.3em; }
+.gradio-container h2 {
+    font-size: 1.65rem !important;
+    margin-top: 1.6em; margin-bottom: 0.4em;
+    padding-top: 0.6em; padding-bottom: 0.2em;
+    border-top: 1px solid #e3e3e3;
+}
+.gradio-container h3 {
+    font-size: 1.15rem !important;
+    margin-top: 0.8em; margin-bottom: 0.3em;
+    opacity: 0.9;
+}
+/* Make the two collapsible explainer titles read like real section
+   headings instead of small UI chrome. */
+.gradio-container .label-wrap > button,
+.gradio-container .accordion > .label-wrap,
+.gradio-container details > summary {
+    font-size: 1.1rem !important;
+    font-weight: 600 !important;
+}
+"""
+
+with gr.Blocks(
+    title="Toto Weather Forecast",
+    theme=gr.themes.Default(font=SYSTEM_FONT),
+    css=HEADER_CSS,
+) as demo:
     gr.Markdown("# Toto on my home weather station")
     gr.Markdown(HOOK)
     gr.Markdown(SUBTITLE)
 
+    gr.Markdown("## ☀️ Live now")
     hero_md = gr.Markdown()
-    gr.Markdown(f"### 📅 {VIEW_WEEK['label']}")
+
+    gr.Markdown("## 📅 Weekly forecast")
+    gr.Markdown(f"### {VIEW_WEEK['label']}")
     week_plot = gr.Plot(label="Weekly")
+
+    gr.Markdown("## 🆚 Toto vs NWS — near-term forecast")
     comparison_md = gr.Markdown()
     gr.HTML(
         # KOKX is the NWS radar site at Upton, NY — covers Long Island incl.
@@ -475,49 +509,58 @@ with gr.Blocks(title="Toto Weather Forecast", theme=gr.themes.Soft()) as demo:
         "<span style='opacity:0.55'>🔄 Live data + forecast auto-refresh every 15 minutes.</span>"
     )
 
-    gr.Markdown("### 🏆 How has each model done so far?")
+    gr.Markdown("## 📊 Results")
     scoreboard_md = gr.Markdown()
     residual_plot = gr.Plot(label="Forecast residual")
 
+    gr.Markdown("## 🔧 How it's made")
     with gr.Accordion("How the scoreboard is calculated", open=False):
         gr.Markdown(
             "We score each model on **how close its prediction was to the actual Ecowitt reading** "
-            "for the same hour, averaged over the last 48 hours.\n\n"
+            "for the same hour, at three fixed forecast lookaheads — **1 h, 3 h, and 12 h ahead** "
+            "— averaged over the rolling last 48 hours.\n\n"
             "**Picking which forecast counts.** Every refresh logs both models' forecasts for the "
-            "next 24-72 hours along with `forecast_made_at` and `target_ts`. For each past target "
-            "hour we keep only the **most recent forecast issued *before* that hour** — so neither "
-            "model is allowed to peek at data it couldn't have seen at prediction time.\n\n"
-            "**The math.** For each metric, per source:\n\n"
+            "next 48 hours along with `forecast_made_at` and `target_ts`. For each past target "
+            "hour and each lookahead N, we pick the forecast whose `forecast_made_at` is closest "
+            "to `target_ts − N hours`. Same lookahead for both models = fair comparison.\n\n"
+            "**The math.** For each metric (temperature, humidity), per source, per lookahead:\n\n"
             "&nbsp;&nbsp;`abs_err = |p50 − actual|`\n\n"
             "&nbsp;&nbsp;`MAE = mean(abs_err)` over target hours in the last 48 h\n\n"
-            "&nbsp;&nbsp;`n` = number of (target hour, source) pairs that had both a forecast and an Ecowitt actual\n\n"
-            "The lower MAE wins. NWS doesn't forecast barometric pressure, so the pressure row shows Toto only.\n\n"
+            "&nbsp;&nbsp;`n` = number of past target hours with both a forecast and an Ecowitt actual\n\n"
+            "The lower MAE wins. Barometric pressure is omitted from the scoreboard because NWS "
+            "doesn't expose a pressure forecast — there's nothing to compare against.\n\n"
+            "**Residual chart** (below the table). Same picking rule, pinned to the **1 h-ahead** "
+            "lookahead (first row of the table). Each point is `prediction − actual`; zero = perfect.\n\n"
             "**What this is NOT.** We score the point prediction (p50) — which throws away Toto's "
             "uncertainty. A scoring rule like CRPS or pinball loss would credit a well-calibrated "
-            "10–90% band; MAE doesn't. Folded across all horizons too — Toto's +6 h call and +24 h "
-            "call both contribute to the same number. Per-horizon breakdowns are a likely follow-up.\n\n"
+            "10–90% band; MAE doesn't.\n\n"
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md#scoreboard--how-the-accuracy-is-calculated)."
         )
 
     with gr.Accordion("How the forecast is made", open=False):
         gr.Markdown(
             "**Model.** [Datadog/Toto-2.0-22m](https://huggingface.co/Datadog/Toto-2.0-22m) "
-            "(~22 M params, CPU). Second-smallest variant of Toto 2.0; the larger ones (313 M / 1 B / 2.5 B) would tighten the band further.\n\n"
-            "**Input.** For each metric we feed Toto a univariate window of the most recent "
-            "Ecowitt history at the chosen display cadence (default 1 h spacing). "
-            "Toto requires the context length to be a multiple of its `patch_size=32`, so we "
-            "truncate the oldest points to the largest multiple of 32 we have — or, if we have "
-            "fewer than 32, left-pad to one patch and set `target_mask=False` on the padded "
-            "steps so the model ignores them.\n\n"
+            "(~22 M params, CPU). Second-smallest variant of Toto 2.0; the larger 313 M / 1 B / "
+            "2.5 B models would tighten the band further.\n\n"
+            "**Input.** Univariate per metric — temperature, humidity, pressure, rain rate run "
+            "independently. The Space pulls Ecowitt's `cycle_type=5min` history into a local "
+            "SQLite archive (`data/ecowitt.db`) every 15 min and accumulates true 5-min cadence "
+            "over time. The **chart** displays the 5-min series; **Toto** is fed the same series "
+            "downsampled to hourly so the input length stays in the model's sweet spot.\n\n"
+            "**Context length.** 7 days × hourly = up to 168 points. Toto requires the context "
+            "to be a multiple of its `patch_size` (read from `model.config`), so we truncate the "
+            "oldest points to the largest multiple that fits — or, if we have fewer points than "
+            "one patch, left-pad and set `target_mask=False` on the padding so the model ignores it.\n\n"
             "**Output.** `model.forecast(...)` returns 9 analytical quantiles "
-            "(`[0.1, 0.2, …, 0.9]`) for each future step — no Monte-Carlo sampling. "
-            "We plot the p10–p90 band and the p50 median. "
-            "**Horizon.** `horizon_steps = round(horizon_hours / step_hours)`; defaults give 24 hourly steps.\n\n"
-            "**Cadence.** A daemon thread inside the Space re-runs the whole pipeline every "
-            "15 minutes (cache TTL is 14 min, so each tick re-hits Ecowitt and NWS). Every "
-            "snapshot is persisted to SQLite and backed up to a private HF Dataset, which is "
-            "also what powers the side-by-side scoreboard and the past-forecast overlays "
-            "above.\n\n"
+            "(`[0.1, 0.2, …, 0.9]`) for each future step — **no Monte-Carlo sampling**. "
+            "We plot the p10–p90 band and the p50 median.\n\n"
+            "**Horizon.** 48 hourly steps = 48 hours into the future. Per-metric inference takes "
+            "well under a second on the free-tier CPU.\n\n"
+            "**Cadence.** A daemon thread inside the Space runs sync → inference → push every "
+            "15 minutes; a 10-minute GitHub Actions cron pings the public URL to keep the Space "
+            "warm. Both DBs (forecasts + raw archive) are backed up to a private HF Dataset "
+            "(`bitsofchris/toto-weather-forecast-log`), so the scoreboard survives Space "
+            "rebuilds.\n\n"
             "Full spec: [`docs/toto-inference.md`](https://huggingface.co/spaces/bitsofchris/time-series-ai-weather-forecast/blob/main/docs/toto-inference.md)."
         )
 
