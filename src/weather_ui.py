@@ -182,7 +182,7 @@ def emoji_strip_markdown(nws_df: pd.DataFrame, tz: str, n: int = 12) -> str:
 
 def residual_figure(
     df: pd.DataFrame,
-    title: str = "Forecast residual — 1 h-ahead prediction minus Ecowitt actual, last 7 days (°F)",
+    title: str = "Forecast residual — 1h-ahead prediction minus Ecowitt actual, last 48h (°F)",
 ) -> go.Figure:
     """Plot signed residuals over time for Toto and NWS. Zero is perfect."""
     fig = go.Figure()

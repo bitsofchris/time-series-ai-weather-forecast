@@ -42,7 +42,7 @@ PLACE_NAME = os.environ.get("PLACE_NAME", "Yaphank, NY")
 # keeps the forecast informed by the full week without making the chart
 # noisy.
 VIEW_WEEK = {
-    "label": "Past 5 days · 48 h forecast (5-min display, Toto fed hourly)",
+    "label": "Past 5 days · 48h forecast (5-min display, Toto fed hourly)",
     "cycle_type": "5min",
     "resample": "5min",            # display cadence on the chart
     "forecast_resample": "1h",     # cadence Toto actually consumes
@@ -284,10 +284,9 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Residual chart — 1 h-ahead (matches the first row of the scoreboard
-    # table). Window is the last 7 days so the picture spans more of the
-    # weather pattern than the rolling 48 h table can show.
-    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=168, lag_hours=1.0)
+    # Residual chart — 1 h-ahead, last 48h, matches the first row of the
+    # rolling scoreboard.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=1.0)
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
@@ -328,7 +327,7 @@ def _per_metric_mae_tables(conn, window_hours: int | None):
                 d_cell = f"**{winner}** by {abs(diff):.2f} {unit}"
             else:
                 d_cell = "—"
-            rows.append(f"| **{lag_h} h-ahead** | {t_cell} | {n_cell} | {d_cell} |")
+            rows.append(f"| **{lag_h}h-ahead** | {t_cell} | {n_cell} | {d_cell} |")
         if rows:
             parts.append(
                 "\n".join(
@@ -362,15 +361,15 @@ def render_scoreboard(conn) -> str:
     lifetime_parts, lifetime_has = _per_metric_mae_tables(conn, window_hours=None)
 
     lines = [
-        "### Rolling 48 h MAE — lower is better",
+        "### Rolling 48h MAE — lower is better",
         (
-            "<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48 h window.</span>"
+            "<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48h window.</span>"
         ),
     ]
     if rolling_has:
         lines.extend(rolling_parts)
     else:
-        lines.append("_No scored forecasts yet in the last 48 h._")
+        lines.append("_No scored forecasts yet in the last 48h._")
 
     lines.append("### 🕰 Lifetime MAE")
     lines.append(
@@ -521,8 +520,8 @@ with gr.Blocks(title="Toto Weather Forecast") as demo:
     )
 
     gr.Markdown("## 📊 Results")
-    scoreboard_md = gr.Markdown()
     residual_plot = gr.Plot(label="Forecast residual")
+    scoreboard_md = gr.Markdown()
 
     gr.Markdown("## 🔧 How it's made")
     gr.Image(
@@ -543,19 +542,20 @@ with gr.Blocks(title="Toto Weather Forecast") as demo:
         gr.Markdown(
             "We score each model on **how close its prediction was to the actual Ecowitt reading** "
             "for the same hour, at three fixed forecast lookaheads — **1 h, 3 h, and 12 h ahead** "
-            "— averaged over the rolling last 48 hours.\n\n"
+            "— averaged over the rolling last 48h, plus a lifetime view over every snapshot since "
+            "the scoreboard started.\n\n"
             "**Picking which forecast counts.** Every refresh logs both models' forecasts for the "
-            "next 48 hours along with `forecast_made_at` and `target_ts`. For each past target "
-            "hour and each lookahead N, we pick the forecast whose `forecast_made_at` is closest "
-            "to `target_ts − N hours`. Same lookahead for both models = fair comparison.\n\n"
+            "next 48h along with `forecast_made_at` and `target_ts`. For each past target hour "
+            "and each lookahead N, we pick the forecast whose `forecast_made_at` is closest to "
+            "`target_ts − N hours`. Same lookahead for both models = fair comparison.\n\n"
             "**The math.** For each metric (temperature, humidity), per source, per lookahead:\n\n"
             "&nbsp;&nbsp;`abs_err = |p50 − actual|`\n\n"
-            "&nbsp;&nbsp;`MAE = mean(abs_err)` over target hours in the last 48 h\n\n"
+            "&nbsp;&nbsp;`MAE = mean(abs_err)` over target hours in the window (48h or lifetime)\n\n"
             "&nbsp;&nbsp;`n` = number of past target hours with both a forecast and an Ecowitt actual\n\n"
             "The lower MAE wins. Barometric pressure is omitted from the scoreboard because NWS "
             "doesn't expose a pressure forecast — there's nothing to compare against.\n\n"
-            "**Residual chart** (below the table). Same picking rule, pinned to the **1 h-ahead** "
-            "lookahead (first row of the table). Each point is `prediction − actual`; zero = perfect.\n\n"
+            "**Residual chart** (above the rolling table). Same picking rule, pinned to the "
+            "**1h-ahead** lookahead. Each point is `prediction − actual`; zero = perfect.\n\n"
             "**What this is NOT.** We score the point prediction (p50) — which throws away Toto's "
             "uncertainty. A scoring rule like CRPS or pinball loss would credit a well-calibrated "
             "10–90% band; MAE doesn't.\n\n"
