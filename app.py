@@ -284,9 +284,10 @@ def refresh():
         comparison_md = ""
     scoreboard = render_scoreboard(log_conn)
 
-    # Residual chart — 1 h-ahead, matching the first row of the scoreboard
-    # table so the picture corresponds to the easiest headline number.
-    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=48, lag_hours=1.0)
+    # Residual chart — 1 h-ahead (matches the first row of the scoreboard
+    # table). Window is the last 7 days so the picture spans more of the
+    # weather pattern than the rolling 48 h table can show.
+    resid_df = forecast_log.residuals(log_conn, metric="temp_f", window_hours=168, lag_hours=1.0)
     resid_fig = residual_figure(resid_df) if not resid_df.empty else None
 
     persist.push_db_async()
@@ -302,35 +303,16 @@ SCOREBOARD_METRICS = [
 ]
 
 
-def render_scoreboard(conn) -> str:
-    """Per-metric, per-lookahead MAE table.
-
-    Rows = forecast lookahead (1h / 3h / 12h). Cols = Toto MAE, NWS MAE,
-    delta. Pressure has no NWS forecast so its column is dashed."""
-    started_row = conn.execute(
-        "SELECT MIN(forecast_made_at) FROM forecast_snapshots"
-    ).fetchone()
-    started_unix = started_row[0] if started_row and started_row[0] else None
-    started_str = (
-        datetime.fromtimestamp(started_unix, tz=timezone.utc)
-        .astimezone(__import__("zoneinfo").ZoneInfo(DISPLAY_TZ))
-        .strftime("%b %-d, %Y %-I:%M %p %Z")
-        if started_unix else "—"
-    )
-
-    lines = [
-        "### Rolling 48 h MAE — lower is better",
-        (
-            f"<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48 h window. "
-            f"Scoreboard started {started_str}.</span>"
-        ),
-    ]
+def _per_metric_mae_tables(conn, window_hours: int | None):
+    """For each scored metric, return a Markdown table of per-lookahead MAE
+    over the requested window. window_hours=None means lifetime."""
+    parts: list[str] = []
     any_data = False
     for metric, label, unit in SCOREBOARD_METRICS:
         rows: list[str] = []
         for lag_h in SCOREBOARD_HORIZONS_H:
             df = forecast_log.scoreboard_at_lag(
-                conn, metric=metric, lag_hours=lag_h, window_hours=48,
+                conn, metric=metric, lag_hours=lag_h, window_hours=window_hours,
             )
             if df.empty:
                 continue
@@ -344,29 +326,62 @@ def render_scoreboard(conn) -> str:
                 diff = toto["mae"] - nws_row["mae"]
                 winner = "🤖 Toto" if diff < 0 else "🌎 NWS"
                 d_cell = f"**{winner}** by {abs(diff):.2f} {unit}"
-            elif toto is not None:
-                d_cell = "—"
             else:
                 d_cell = "—"
             rows.append(f"| **{lag_h} h-ahead** | {t_cell} | {n_cell} | {d_cell} |")
         if rows:
-            # Build the whole table as one chunk — Markdown breaks the
-            # table if there's a blank line between the header and rows,
-            # and "\n\n".join below would insert exactly that.
-            table = "\n".join(
-                [
-                    f"**{label}**",
-                    "",
-                    "| Lookahead | 🤖 Toto MAE | 🌎 NWS MAE | Δ |",
-                    "|---|---|---|---|",
-                    *rows,
-                ]
+            parts.append(
+                "\n".join(
+                    [
+                        f"**{label}**",
+                        "",
+                        "| Lookahead | 🤖 Toto MAE | 🌎 NWS MAE | Δ |",
+                        "|---|---|---|---|",
+                        *rows,
+                    ]
+                )
             )
-            lines.append(table)
-    if not any_data:
-        lines.append(
-            "_No scored forecasts yet. The scoreboard fills in once forecasts have target hours that have already passed and matching Ecowitt actuals — typically within an hour or two of running._"
-        )
+    return parts, any_data
+
+
+def render_scoreboard(conn) -> str:
+    """Two MAE tables — rolling 48 h and lifetime — each with per-metric
+    rows for 1 h / 3 h / 12 h forecast lookahead."""
+    started_row = conn.execute(
+        "SELECT MIN(forecast_made_at) FROM forecast_snapshots"
+    ).fetchone()
+    started_unix = started_row[0] if started_row and started_row[0] else None
+    started_str = (
+        datetime.fromtimestamp(started_unix, tz=timezone.utc)
+        .astimezone(__import__("zoneinfo").ZoneInfo(DISPLAY_TZ))
+        .strftime("%b %-d, %Y %-I:%M %p %Z")
+        if started_unix else "—"
+    )
+
+    rolling_parts, rolling_has = _per_metric_mae_tables(conn, window_hours=48)
+    lifetime_parts, lifetime_has = _per_metric_mae_tables(conn, window_hours=None)
+
+    lines = [
+        "### Rolling 48 h MAE — lower is better",
+        (
+            "<span style='opacity:0.6'>**n** = number of past hours scored in the rolling 48 h window.</span>"
+        ),
+    ]
+    if rolling_has:
+        lines.extend(rolling_parts)
+    else:
+        lines.append("_No scored forecasts yet in the last 48 h._")
+
+    lines.append("### 🕰 Lifetime MAE")
+    lines.append(
+        "<span style='opacity:0.6'>"
+        f"Every forecast we've ever logged. Scoreboard started {started_str}."
+        "</span>"
+    )
+    if lifetime_has:
+        lines.extend(lifetime_parts)
+    else:
+        lines.append("_No scored forecasts yet._")
     return "\n\n".join(lines)
 
 
@@ -439,8 +454,8 @@ HOOK = (
 SUBTITLE = (
     "Live readings from my Ecowitt GW3000 gateway + WS90 7-in-1 sensor, plus a probabilistic forecast "
     "from [Datadog's Toto 2.0 (22M)](https://huggingface.co/Datadog/Toto-2.0-22m), compared against "
-    "the [NWS hourly forecast](https://www.weather.gov/documentation/services-web-api). "
-    "The scoreboard tracks who's been more accurate over the past 48 hours."
+    "the [NWS hourly forecast](https://www.weather.gov/documentation/services-web-api), "
+    "with a scoreboard tracking who's been more accurate."
 )
 
 SYSTEM_FONT = [

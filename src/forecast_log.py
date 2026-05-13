@@ -347,7 +347,7 @@ def scoreboard_at_lag(
     conn: sqlite3.Connection,
     metric: str,
     lag_hours: float,
-    window_hours: int = 48,
+    window_hours: int | None = 48,
 ) -> pd.DataFrame:
     """Per-source MAE at a specific forecast lookahead.
 
@@ -356,12 +356,24 @@ def scoreboard_at_lag(
     autorefresh ticking every 15 min that picker selects a forecast within
     ~7-8 min of the requested lag, so the MAE genuinely reflects the
     'how good was the N-hours-ahead prediction?' question.
+
+    `window_hours=None` removes the rolling-window filter — useful for
+    'lifetime' MAE since the very first logged snapshot.
     """
     import time as _time  # noqa: PLC0415
     lag_seconds = int(lag_hours * 3600)
     now = int(_time.time())
-    cutoff = now - window_hours * 3600
-    sql = """
+    where_window = ""
+    params: list = [lag_seconds, metric]
+    if window_hours is not None:
+        cutoff = now - int(window_hours) * 3600
+        where_window = " AND target_ts BETWEEN ? AND ?"
+        params.extend([cutoff, now])
+    else:
+        where_window = " AND target_ts <= ?"
+        params.append(now)
+    params.append(metric)  # for the outer WHERE on actuals
+    sql = f"""
     WITH ranked AS (
         SELECT source, target_ts, forecast_made_at, p50,
                ROW_NUMBER() OVER (
@@ -371,7 +383,7 @@ def scoreboard_at_lag(
         FROM forecast_snapshots
         WHERE metric = ?
           AND forecast_made_at <= target_ts
-          AND target_ts BETWEEN ? AND ?
+          {where_window}
     )
     SELECT r.source,
            COUNT(*) AS n,
@@ -381,5 +393,5 @@ def scoreboard_at_lag(
     WHERE r.rk = 1 AND a.metric = ?
     GROUP BY r.source
     """
-    df = pd.read_sql_query(sql, conn, params=[lag_seconds, metric, cutoff, now, metric])
+    df = pd.read_sql_query(sql, conn, params=params)
     return df
